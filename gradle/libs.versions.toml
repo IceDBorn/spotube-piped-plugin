@@ -1,0 +1,24 @@
+[versions]
+
+kotlin = "2.3.21"
+kotlinx-coroutines = "1.10.2"
+kotlinx-serialization = "1.10.0"
+spotube-gradle = "0.1.1"
+spotube-plugin-interfaces = "0.1.0"
+ziplineVersion = "1.27.0"
+semver = "2.1.0"
+
+[libraries]
+
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
+spotube-plugin-interfaces = { module = "dev.krtirtho.spotube:plugin_interfaces", version.ref = "spotube-plugin-interfaces" }
+zipline-core = { module = "app.cash.zipline:zipline", version.ref = "ziplineVersion" }
+semver = { module = "net.swiftzer.semver:semver", version.ref = "semver" }
+
+[plugins]
+
+kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+kotlinx-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+spotubeGradle = { id = "dev.krtirtho.spotube.gradle-plugin", version.ref = "spotube-gradle" }
+zipline-gradle-plugin = { id = "app.cash.zipline", version.ref = "ziplineVersion" }
