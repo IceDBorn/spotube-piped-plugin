@@ -152,14 +152,19 @@ internal class RealMetadataArtistAPI(
         channel: PipedChannelInfo,
         pagination: PaginationStrategy?,
     ): PaginationResult<MetadataAlbum.Detailed> {
-        if (channel.name.isBlank()) return emptyPagination()
+        // Auto-generated music channels end in " - Topic"; that suffix poisons the music_albums search
+        // query (YT Music then ranks other channels' playlists first), so search the cleaned name instead.
+        val query = cleanArtistName(channel.name)
+        if (query.isBlank()) return emptyPagination()
         return runCatching {
-            val page = client.search(channel.name, PipedSearchFilter.MUSIC_ALBUMS, pagination.continuationToken())
-            // First page: only albums by this artist; later pages: keep whatever the query returns.
+            val page = client.search(query, PipedSearchFilter.MUSIC_ALBUMS, pagination.continuationToken())
+            // EVERY page is filtered by the artist: YT Music search is fuzzy, so continuation pages
+            // (and title-matching rows) mix in albums by other artists.
             val items = page?.items.orEmpty()
                 .filter { it.type == "playlist" }
-                .filter { album -> pagination != null || albumMatchesArtist(album, id, channel.name) }
-                .mapNotNull { it.toAlbumDetailed(channel.toArtistBasic()) }
+                .filter { albumMatchesArtist(it, id, query) }
+                .distinctBy { playlistIdOf(it.url) }
+                .mapNotNull { it.toAlbumDetailed() }
             PaginationResult(
                 items = items,
                 totalCount = items.size,
@@ -169,11 +174,12 @@ internal class RealMetadataArtistAPI(
     }
 }
 
-private fun albumMatchesArtist(album: PipedSearchItem, channelId: String, channelName: String): Boolean {
-    val sameChannel = channelIdOf(album.uploaderUrl) == channelId
-    val sameName = channelName.isNotBlank() &&
-        (album.uploaderName.equals(channelName, ignoreCase = true) ||
-            album.name.contains(channelName, ignoreCase = true) ||
-            album.title.contains(channelName, ignoreCase = true))
-    return sameChannel || sameName
+/** The album is this artist's when its uploader channel id matches; a row without a usable channel id
+ * (or a different official channel) passes only on an EXACT cleaned uploader-name match. Album titles are
+ * NOT matched: a title that merely mentions the artist admits albums by other artists. */
+private fun albumMatchesArtist(album: PipedSearchItem, channelId: String, artistName: String): Boolean {
+    val uploaderId = channelIdOf(album.uploaderUrl)
+    if (uploaderId == channelId) return true
+    val uploaderName = cleanArtistName(album.uploaderName)
+    return uploaderName.equals(artistName, ignoreCase = true)
 }

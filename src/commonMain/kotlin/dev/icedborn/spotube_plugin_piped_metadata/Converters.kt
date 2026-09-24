@@ -195,11 +195,11 @@ internal fun PipedSearchItem.toAlbumBasic(artistFallback: MetadataArtist.Basic? 
     )
 }
 
-internal fun PipedSearchItem.toAlbumDetailed(artistFallback: MetadataArtist.Basic? = null): MetadataAlbum.Detailed? {
+internal fun PipedSearchItem.toAlbumDetailed(): MetadataAlbum.Detailed? {
     val id = playlistIdOf(url)
     if (id.isEmpty()) return null
     val (title, type) = splitAlbumTitle(name.ifBlank { title })
-    val artist = uploaderArtist(uploaderName, uploaderUrl) ?: artistFallback
+    val artist = uploaderArtist(uploaderName, uploaderUrl)
     return MetadataAlbum.Detailed(
         releaseDate = null,
         genres = emptyList(),
@@ -263,12 +263,6 @@ internal fun PipedChannelInfo.toArtist(): MetadataArtist.Detailed = MetadataArti
     externalUri = "https://www.youtube.com/channel/$id",
 )
 
-internal fun PipedChannelInfo.toArtistBasic(): MetadataArtist.Basic = MetadataArtist.Basic(
-    id = id,
-    name = cleanArtistName(name),
-    thumbnails = avatarUrl.toThumbnails(),
-    externalUri = "https://www.youtube.com/channel/$id",
-)
 
 internal fun PipedChannelInfo.toUser(): MetadataUser = MetadataUser(
     id = id,
