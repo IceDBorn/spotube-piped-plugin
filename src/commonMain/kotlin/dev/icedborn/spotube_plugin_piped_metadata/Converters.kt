@@ -69,6 +69,10 @@ internal fun thumbnailDimsOf(url: String): Pair<Int, Int> {
 internal fun cleanArtistName(name: String): String =
     name.removeSuffix(" - Topic")
 
+/** Canonical form of a synthetic artist id: embedded uploader name cleaned. */
+internal fun canonicalArtistId(id: String): String =
+    if (id.startsWith("channel:")) "channel:" + cleanArtistName(id.removePrefix("channel:")) else id
+
 /** Artist derived from a Piped uploader field; null when there is no usable name or channel id. */
 internal fun uploaderArtist(
     name: String,
@@ -76,10 +80,11 @@ internal fun uploaderArtist(
     avatar: String? = null,
 ): MetadataArtist.Basic? {
     val id = channelIdOf(channelUrl)
-    if (name.isBlank() && id.isEmpty()) return null
+    val clean = cleanArtistName(name)
+    if (clean.isBlank() && id.isEmpty()) return null
     return MetadataArtist.Basic(
-        id = id.ifEmpty { "channel:$name" },
-        name = name,
+        id = id.ifEmpty { "channel:$clean" },
+        name = clean,
         thumbnails = avatar.toThumbnailsOrEmpty(),
         externalUri = if (id.isNotEmpty()) "https://www.youtube.com/channel/$id" else null,
     )
@@ -92,11 +97,14 @@ internal fun uploaderUser(
     avatar: String? = null,
 ): MetadataUser? {
     val id = channelIdOf(channelUrl)
-    if (name.isBlank() && id.isEmpty()) return null
+    val clean = cleanArtistName(name)
+    if (clean.isBlank() && id.isEmpty()) return null
     return MetadataUser(
-        id = id.ifEmpty { "channel:$name" },
-        username = cleanArtistName(name),
-        displayName = name,
+        id = id.ifEmpty { "channel:$clean" },
+        // The host renders displayName (falling back to username), so the clean,
+        // suffix-stripped name belongs in displayName — same convention as toUser.
+        username = name,
+        displayName = clean,
         thumbnails = avatar.toThumbnailsOrEmpty(),
         externalUri = if (id.isNotEmpty()) "https://www.youtube.com/channel/$id" else null,
     )

@@ -46,22 +46,33 @@ class RealPipedAudioAPI(private val client: PipedClient) : AudioAPI {
         }
 
         val query = "${track.title} ${trackArtist(track)}".trim()
+        // Null = FAILED fetch (throttle), not zero-hit: null music_songs falls to the plain-YouTube backup; a null
+        // BACKUP surfaces the transient (throw -> retry). Convert FIRST — unconvertible rows are no source at all.
         val songs = client.searchSongs(query)
+        val convertedSongs = songs.orEmpty().mapNotNull { it.toBasic(track) }
         // YouTube Music misses many uploads; when the best song result is weak or
         // absent, also search plain YouTube so the track still resolves.
-        val bestMatch = songs.maxOfOrNull { it.confidenceAgainst(track) } ?: 0f
-        val videos = if (bestMatch < PLAYABLE_CONFIDENCE) client.searchVideos(query) else emptyList()
-        val items = (songs + videos)
-            .distinctBy { it.url }
-            .sortedByDescending { it.confidenceAgainst(track) }
+        val bestMatch = convertedSongs.maxOfOrNull { it.confidence } ?: 0f
+        val backupAttempted = bestMatch < PLAYABLE_CONFIDENCE
+        val videos = if (backupAttempted) client.searchVideos(query) else null
+        val items = (convertedSongs + videos.orEmpty().mapNotNull { it.toBasic(track) })
+            .distinctBy { it.id }
+            .sortedByDescending { it.confidence }
             .take(MAX_SOURCES)
-            .map { it.toBasic(track) }
+        // The backup is the LAST authority: when it SUCCEEDED, weak music_songs rows are the best available;
+        // an ATTEMPTED backup that FAILED throws (retry) only when NO usable candidate survived (round-96/106).
+
+        if (items.isEmpty() && videos == null) {
+            throw IllegalStateException("Piped search failed for \"$query\" (throttled or error body)")
+        }
         return items
     }
 
     override suspend fun getStreamsOfAudioSource(source: AudioSource.Basic): List<AudioSource.Streamed> {
         val videoId = source.id
-        val info = client.streams(videoId)
+        // Null = FAILED fetch (throttle), never authoritative 'no audio': degrade to EMPTY so the host proceeds to
+        // the next candidate — an exception aborts the whole MAX_SOURCES chain at the first throttled /streams (round-106).
+        val info = client.streams(videoId) ?: return emptyList()
 
         val streams = info.audioStreams
             .filter { it.url.isNotBlank() }
@@ -117,8 +128,11 @@ private fun basicSource(
     confidence = confidence,
 )
 
-private fun PipedSearchItem.toBasic(track: MetadataTrack): AudioSource.Basic {
+private fun PipedSearchItem.toBasic(track: MetadataTrack): AudioSource.Basic? {
+    // Only a real watch URL yields a source id /streams can resolve: fallback /live/ or malformed rows would mint the
+    // whole URL as the source id (every selection then 404s). Search rows must carry a watch URL.
     val videoId = url.substringAfter("/watch?v=").substringBefore('&')
+    if (!YOUTUBE_ID_REGEX.matches(videoId)) return null
     val thumbnails = if (thumbnail.isNotBlank()) {
         listOf(Thumbnail(url = thumbnail, width = 300, height = 300))
     } else {

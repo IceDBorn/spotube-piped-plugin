@@ -9,13 +9,25 @@ class RealMetadataUserAPI(
 ) : MetadataUserAPI {
 
     override suspend fun getUser(id: String): MetadataUser? {
+        // Synthetic ids (channel:NAME) come from uploader URLs without a parseable
+        // channel id; the name is embedded, so no instance fetch is possible.
+        if (id.startsWith("channel:")) {
+            val name = id.removePrefix("channel:").let(::cleanArtistName)
+            return MetadataUser(
+                id = id,
+                username = name,
+                displayName = name,
+                thumbnails = emptyList(),
+                externalUri = null,
+            )
+        }
         if (!YOUTUBE_CHANNEL_ID.matches(id)) return null
         return runCatching {
-            val channel = store.cachedChannel(id) ?: run {
-                val fetched = client.channel(id)
-                store.cacheChannel(id, fetched)
-                fetched
-            }
+            // Same cached-value trust as channelNameFor / fetchChannel: a cached channel with a blank name is
+            // a MISS (CHANNEL_KEY is never invalidated — trusting it would render the user empty forever).
+            val channel = store.cachedChannel(id)?.takeIf { it.name.isNotBlank() } ?: client.channel(id)
+                ?.also { store.cacheChannel(id, it) }
+                ?: return@runCatching null
             channel.toUser()
         }.getOrNull()
     }

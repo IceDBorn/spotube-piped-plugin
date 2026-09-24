@@ -8,10 +8,8 @@ import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
-/**
- * Real playlists come from Piped; created playlists and the saved list live in
- * the plugin's storage because Piped has no public playlist API.
- */
+/** Real playlists come from Piped; created playlists and the saved list live in plugin storage — Piped has no
+ * public playlist API. */
 private const val LIKED_SONGS_ID = "piped-liked-songs"
 
 internal class RealMetadataPlaylistAPI(
@@ -26,10 +24,26 @@ internal class RealMetadataPlaylistAPI(
         storedLocalPlaylist(id)?.let { return it.toEntity() }
         mirror.accountPlaylist(id)?.let { return it.toEntity() }
         val cached = store.cachedAlbumPlaylist(id)
-        val page = cached ?: run {
+        val page = if (cached != null && (cached.relatedStreams.isNotEmpty() || !cached.nextpage.isNullOrBlank())) cached else {
+            // playlist() nulls BLANK bodies (throttles); a decodable page — even EMPTY — is authoritative: cache it.
+            // Re-fetch failures degrade to the cached page (real header) — the unwrapped caller must not hard-fail.
             val fetched = client.playlist(id)
-            store.cacheAlbumPlaylist(id, fetched)
-            fetched
+            if (fetched != null) {
+                store.cacheAlbumPlaylist(id, fetched)
+                fetched
+            } else if (cached != null) {
+                cached
+            } else {
+                return MetadataPlaylist(
+                    id = id,
+                    title = "",
+                    description = null,
+                    thumbnails = emptyList(),
+                    trackCount = 0,
+                    externalUri = null,
+                    owner = null,
+                )
+            }
         }
         return page.toPlaylist(id)
     }
@@ -59,17 +73,15 @@ internal class RealMetadataPlaylistAPI(
     override suspend fun savedPlaylists(pagination: PaginationStrategy?): PaginationResult<MetadataPlaylist> {
         mirror.maybeRefresh()
         val paging = pagination.getOffsetOrDefault()
-        // Only user-visible playlists: created ones, account playlists from the
-        // cache, and bookmarked ones. The internal sync mirrors ("Spotube -
-        // Albums/Artists/Favorites") stay hidden.
+        // Only user-visible playlists: created, cached account, and bookmarked. The internal sync mirrors
+        // ("Spotube - Albums/Artists/Favorites") stay hidden.
         val created = library.storedPlaylists().map { it.toEntity() }
         val account = mirror.cachedState()?.playlists.orEmpty().map { it.toEntity() }
         val saved = library.savedPlaylists().mapNotNull { id -> runCatching { getPlaylist(id) }.getOrNull() }
         val all = (created + account + saved).distinctBy { it.id }
         if (all.isEmpty() && mirror.allSavedTrackIds().isNotEmpty()) {
-            // The host only shows its "Liked Tracks" card when the playlist
-            // list is non-empty, so keep the tab usable with a synthetic
-            // saved-tracks playlist instead of an empty state.
+            // The host only shows its "Liked Tracks" card when the playlist list is non-empty, so keep the tab
+            // usable with a synthetic saved-tracks playlist instead of an empty state.
             val liked = runCatching { likedSongsPlaylist() }.getOrNull()
             if (liked != null) {
                 return PaginationResult(
@@ -108,22 +120,16 @@ internal class RealMetadataPlaylistAPI(
     private suspend fun likedSongsTracks(paging: PaginationStrategy.Offset): PaginationResult<MetadataTrack> {
         val ids = mirror.allSavedTrackIds()
         val slice = ids.drop(paging.offset).take(paging.limit)
-        val items = slice.mapNotNull { id ->
-            runCatching {
-                store.cachedTrack(id) ?: run {
-                    val info = client.streams(id)
-                    store.cacheStreams(id, info)
-                    val track = info.toTrack(id)
-                    store.rememberTrack(track)
-                    track
-                }
-            }.getOrNull()
-        }
+        // Same cachedTrack -> cachedStreams -> client.streams chain as resolveLocalTrack, so cached streams
+        // (AlbumLookup / artistChannelOf writes) are served offline instead of dropped rows.
+        val items = slice.mapNotNull { resolveLocalTrack(it) }
+        // ids come from the authoritative LOCAL saved set (exact count): page by the fixed limit so a dead-id run
+        // never truncates the pager at one window and hides the valid tail. The slice guard belongs to account lists.
         return PaginationResult(
             items = items,
             totalCount = ids.size,
-            nextPagination = if (paging.offset + slice.size < ids.size) {
-                PaginationStrategy.Offset(paging.offset + slice.size, paging.limit)
+            nextPagination = if (paging.offset + paging.limit < ids.size) {
+                PaginationStrategy.Offset(paging.offset + paging.limit, paging.limit)
             } else {
                 null
             },
@@ -180,13 +186,28 @@ internal class RealMetadataPlaylistAPI(
             imageBase64 = imageBase64 ?: existing.imageBase64,
             trackIds = trackIds ?: existing.trackIds,
         )
+        // Remote FIRST, then local commit (fail-soft): a committed local change whose rebuild failed would leave the
+        // mirror old with no retry path (identical updates skip this branch); failure keeps the local record OLD.
+        if (updated.name != existing.name) {
+            if (!mirror.mirrorRenamePlaylist(id, updated.name)) {
+                throw IllegalStateException("Piped playlist mirror rename failed")
+            }
+        }
+        if (updated.trackIds != existing.trackIds) {
+            // Bulk replace (reorder/clear/re-set): incremental add/remove cannot reorder, so rebuild — and remove
+            // NEW-list rows too, else a surviving ghost is skipped by the add and pinned at its old position (round-109).
+            val removed = mirror.mirrorRemoveTracks(id, (existing.trackIds + updated.trackIds).distinct())
+            val added = removed && mirror.mirrorAddTracks(id, updated.trackIds)
+            if (!added) throw IllegalStateException("Piped playlist mirror rebuild failed")
+        }
         library.upsertPlaylist(updated)
-        if (updated.name != existing.name) mirror.mirrorRenamePlaylist(id, updated.name)
         return updated.toEntity()
     }
 
     override suspend fun deletePlaylist(id: String) {
-        mirror.mirrorDeletePlaylist(id)
+        // Fail-soft like save(): keep the local playlist + binding when the remote mirror could not be deleted, so
+        // the retry re-attempts it (a local removal with a surviving mirror orphans the playlist).
+        if (!mirror.mirrorDeletePlaylist(id)) return
         library.deleteStoredPlaylist(id)
         library.removePlaylists(listOf(id))
     }
@@ -196,8 +217,10 @@ internal class RealMetadataPlaylistAPI(
         val existing = storedLocalPlaylist(playlistId)
             ?: throw IllegalStateException("Only locally created playlists can be edited: $playlistId")
         val updated = existing.copy(trackIds = (existing.trackIds + trackIds).distinct())
+        // Remote FIRST, then local commit (fail-soft like updatePlaylist): committing first applies the edit while
+        // the mirror stays old on a transient failure, with nothing reconciling it; failure keeps the record OLD.
+        if (!mirror.mirrorAddTracks(playlistId, trackIds)) throw IllegalStateException("Piped playlist mirror add failed")
         library.upsertPlaylist(updated)
-        mirror.mirrorAddTracks(playlistId, trackIds)
     }
 
     override suspend fun removeTracksFromPlaylist(playlistId: String, trackIds: List<String>) {
@@ -205,8 +228,10 @@ internal class RealMetadataPlaylistAPI(
         val existing = storedLocalPlaylist(playlistId)
             ?: throw IllegalStateException("Only locally created playlists can be edited: $playlistId")
         val updated = existing.copy(trackIds = existing.trackIds.filterNot { it in trackIds })
+        // Remote FIRST, then local commit (same discipline as addTracks/updatePlaylist): a failed remove leaves the
+        // ghost row in the mirror; committing first diverges with no re-sync. Failure keeps the OLD record listed.
+        if (!mirror.mirrorRemoveTracks(playlistId, trackIds)) throw IllegalStateException("Piped playlist mirror remove failed")
         library.upsertPlaylist(updated)
-        mirror.mirrorRemoveTracks(playlistId, trackIds)
     }
 
     private suspend fun storedLocalPlaylist(id: String): StoredPlaylist? =
@@ -232,11 +257,9 @@ internal class RealMetadataPlaylistAPI(
     private suspend fun resolveLocalTrack(id: String): MetadataTrack? = trackSemaphore.withPermit {
         runCatching {
             store.cachedTrack(id)?.let { return@withPermit it }
-            val info = store.cachedStreams(id) ?: run {
-                val fetched = client.streams(id)
-                store.cacheStreams(id, fetched)
-                fetched
-            }
+            val info = store.cachedStreams(id) ?: client.streams(id)
+                ?.also { store.cacheStreams(id, it) }
+                ?: throw IllegalStateException("streams fetch failed for $id")
             val track = info.toTrack(id)
             store.rememberTrack(track)
             track
@@ -248,13 +271,16 @@ internal class RealMetadataPlaylistAPI(
         account: CachedAccountPlaylist,
         paging: PaginationStrategy.Offset,
     ): PaginationResult<MetadataTrack> {
-        val rows = mirror.rowsFor(account.id)
+        val rows = mirror.rowsFor(account.id, paging.offset + paging.limit)
         val total = if (account.trackCount > 0) account.trackCount else rows.tracks.size
         val slice = rows.tracks.drop(paging.offset).take(paging.limit)
+        // Keep paging while the row cache is OPEN: the listing trackCount lags the live walk (TTL refresh), and
+        // truncating at a stale count hides web-grown rows until the next refresh (Store.page() twin, same escape).
+        val more = !rows.complete || paging.offset + slice.size < total
         return PaginationResult(
             items = slice,
             totalCount = total,
-            nextPagination = if (paging.offset + slice.size < total && slice.isNotEmpty()) {
+            nextPagination = if (more && slice.isNotEmpty()) {
                 PaginationStrategy.Offset(paging.offset + slice.size, paging.limit)
             } else {
                 null

@@ -2,6 +2,7 @@ package dev.icedborn.spotube_plugin_piped_metadata
 
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.album.MetadataAlbum
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.album.MetadataAlbumAPI
+import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.album.MetadataAlbumType
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationResult
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
@@ -17,10 +18,29 @@ internal class RealMetadataAlbumAPI(
     override suspend fun getAlbum(id: String): MetadataAlbum.Detailed {
         val realId = if (id.startsWith(ALBUM_LOOKUP_PREFIX)) resolveAlbumId(id) else id
         val cached = store.cachedAlbumPlaylist(realId)
-        val page = cached ?: run {
+        val page = if (cached != null && (cached.relatedStreams.isNotEmpty() || !cached.nextpage.isNullOrBlank())) cached else {
+            // playlist() nulls BLANK bodies (throttles); a decodable page — even EMPTY — is authoritative: cache it.
+            // Re-fetch failures degrade to the cached page (real header) — the unwrapped caller must not hard-fail.
             val fetched = client.playlist(realId)
-            store.cacheAlbumPlaylist(realId, fetched)
-            fetched
+            if (fetched != null) {
+                store.cacheAlbumPlaylist(realId, fetched)
+                fetched
+            } else if (cached != null) {
+                cached
+            } else {
+                return MetadataAlbum.Detailed(
+                    releaseDate = null,
+                    genres = emptyList(),
+                    trackCount = 0,
+                    id = realId,
+                    title = "",
+                    description = null,
+                    thumbnails = emptyList(),
+                    albumType = MetadataAlbumType.Album,
+                    artists = emptyList(),
+                    externalUri = null,
+                )
+            }
         }
         return page.toAlbum(realId)
     }
@@ -39,7 +59,7 @@ internal class RealMetadataAlbumAPI(
     }
 
     private suspend fun resolveAlbumIdForVideo(videoId: String): String? =
-        albumLookup.resolveAlbumForVideo(videoId)
+        albumLookup.resolveAlbumForVideo(videoId).albumId
 
     private suspend fun resolveAlbumIdFor(track: MetadataTrack): String? {
         val artist = track.artists.firstOrNull()?.name.orEmpty()
@@ -91,6 +111,8 @@ internal class RealMetadataAlbumAPI(
         return PaginationResult(
             items = items,
             totalCount = ids.size,
+            // Local saved-set ids are AUTHORITATIVE (the list terminates): page by the fixed limit, so a
+            // transiently-failed page never hides tail ids nor re-requests failing ids (account lists vary).
             nextPagination = if (paging.offset + paging.limit < ids.size) {
                 PaginationStrategy.Offset(paging.offset + paging.limit, paging.limit)
             } else {
@@ -102,17 +124,17 @@ internal class RealMetadataAlbumAPI(
     override suspend fun isSavedAlbums(ids: List<String>): List<Boolean> = mirror.isSavedAlbums(ids)
 
     override suspend fun saveAlbums(ids: List<String>) {
-            val already = library.isSavedAlbums(ids)
-            val fresh = ids.filterIndexed { i, _ -> !already[i] }
+            // Pass the FULL id set, not just library-fresh ids: an id whose save committed locally but never reached
+            // the mirror must keep retrying (already-saved ids are cheap no-ops: rebind + dedupe).
             library.saveAlbums(ids)
-            mirror.save(SavedKind.ALBUM, fresh)
+            mirror.save(SavedKind.ALBUM, ids)
         }
 
     override suspend fun removeSavedAlbums(ids: List<String>) {
 
         mirror.remove(SavedKind.ALBUM, ids)
 
-        library.removeAlbums(ids)
+        mirror.removeLibraryEntries(SavedKind.ALBUM, ids)
 
     }
 }

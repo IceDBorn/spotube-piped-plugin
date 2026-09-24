@@ -1,6 +1,7 @@
 package dev.icedborn.spotube_plugin_piped_metadata
 
 import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI
+import dev.krtirtho.plugin_interfaces.host_apis.HttpMethod
 import dev.krtirtho.plugin_interfaces.host_apis.PersistedStorageAPI
 import dev.krtirtho.plugin_interfaces.host_apis.WebViewAPI
 import dev.krtirtho.plugin_interfaces.plugin_apis.core.CoreAPI
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -25,12 +27,13 @@ import net.swiftzer.semver.SemVer
 
 private const val FORM_WAIT_MS = 900_000L
 
-/**
- * Piped needs no account for metadata, but a per-instance account enables
- * write-through saves to the "Spotube - Albums/Artists/Favorites" playlists and
- * an offline cache of the account state. The login button shown by the host
- * opens the plugin's settings form.
- */
+/** How long the "instance saved" confirmation stays up before the form closes. */
+private const val FORM_CLOSE_GRACE_MS = 800L
+
+private enum class SettingsFormResult { LoggedIn, InstanceOnly }
+
+/** Piped needs no account for metadata; a per-instance account enables write-through saves to the
+ * "Spotube - Albums/Artists/Favorites" playlists and an offline cache of the account state. */
 class RealCoreAPI(
     private val httpClient: HttpClientAPI,
     private val storage: PersistedStorageAPI,
@@ -69,14 +72,43 @@ class RealCoreAPI(
         try {
             loggedInStateFlow.value = false
             val existing = session.load()
-            showSettingsForm(
+            when (showSettingsForm(
                 instanceSource.api().orEmpty(),
                 instanceSource.playback().orEmpty(),
                 existing?.username.orEmpty(),
-            )
-            val account = session.load() ?: throw IllegalStateException("Piped login failed")
-            loggedInStateFlow.value = true
-            onLogin()
+            )) {
+                SettingsFormResult.LoggedIn -> {
+                    val account = session.load() ?: throw IllegalStateException("Piped login failed")
+                    loggedInStateFlow.value = true
+                    onLogin()
+                }
+                // Account-less setup: drop an existing session when the instance changed — a session is only
+                // valid on the instance it was created on.
+                SettingsFormResult.InstanceOnly -> {
+                    var loggedIn = false
+                    val saved = session.load()
+                    if (saved != null) {
+                        val savedInstance = instanceSource.api()
+                        if (savedInstance == null || saved.instance.trim().trimEnd('/') == savedInstance.trimEnd('/')) {
+                            loggedIn = true
+                        } else {
+                            session.clear()
+                        }
+                    }
+                    // Verify the RETAINED token before asserting logged-in: doRefresh() returns silently on a
+                    // failed listing, so onLogin() cannot surface a revoked session (round-104 corr-2).
+
+                    if (loggedIn && saved != null && !listingReachable(saved)) {
+                        session.clear()
+                        loggedIn = false
+                    }
+                    loggedInStateFlow.value = loggedIn
+                    // Same post-login hook as the LoggedIn branch: refresh NOW — a form-completed loggedIn=true
+                    // with an expired token leaves saves silently failing until the TTL-bound refresh.
+
+                    if (loggedIn) onLogin()
+                }
+            }
         } finally {
             webView.exitWebView()
         }
@@ -87,7 +119,25 @@ class RealCoreAPI(
         loggedInStateFlow.value = false
     }
 
-    private suspend fun showSettingsForm(instance: String, playback: String, username: String) {
+    /** True when [account]'s token still answers the authenticated listing. A revoked/expired token yields a
+     * non-2xx or a throttle/error 2xx — the silent-null path onLogin() cannot surface (round-104 corr-2). */
+    private suspend fun listingReachable(account: PipedAccount): Boolean {
+        val response = runCatching {
+            httpClient.request(
+                method = HttpMethod.Get,
+                url = account.instance.trimEnd('/') + "/user/playlists",
+                requestHeaders = mapOf("Accept" to "application/json", "Authorization" to account.token),
+                body = null,
+            )
+        }.getOrNull() ?: return false
+        if (response.statusCode !in 200..299) return false
+        val body = response.body ?: return false
+        if (body.isBlank()) return false
+        val root = runCatching { json.parseToJsonElement(body) }.getOrNull()
+        return root is JsonArray
+    }
+
+    private suspend fun showSettingsForm(instance: String, playback: String, username: String): SettingsFormResult {
         val messages = Channel<String>(Channel.CONFLATED)
         val subscriber = scope.launch {
             webView.postMessagesFlow().onEach { messages.trySend(it) }.launchIn(this)
@@ -109,7 +159,10 @@ class RealCoreAPI(
                     instanceSource.setApi(enteredInstance)
                     instanceSource.setPlayback(enteredPlayback)
                     setFormStatus("Instance saved. Piped uses it for all requests.")
-                    continue
+                    // Same host flow as a successful run: the form is done. The
+                    // instance-only user is not logged in, which the caller keeps.
+                    delay(FORM_CLOSE_GRACE_MS)
+                    return SettingsFormResult.InstanceOnly
                 }
                 if (action != "login") continue
                 val enteredUsername = fieldOr(fields, "username", username)
@@ -138,7 +191,7 @@ class RealCoreAPI(
                     }
                 }
                 session.save(PipedAccount(instance = enteredInstance, username = enteredUsername, token = token))
-                return
+                return SettingsFormResult.LoggedIn
             }
             error("unreachable")
         } finally {
@@ -148,9 +201,12 @@ class RealCoreAPI(
 
     /** The host cannot reply to the form directly, so feedback is pushed with evaluateJavaScript. */
     private suspend fun setFormStatus(text: String) {
+        // The form's JS disables both buttons while a message is in flight; any error status must re-enable both,
+        // or "Save instance only" stays disabled for the rest of the form session after one validation error.
         val script = "var s=document.getElementById('status');" +
             "if(s){s.className='error';s.textContent=${json.encodeToString(text)};}" +
-            "var b=document.getElementById('save');if(b){b.disabled=false;}"
+            "var b=document.getElementById('save');if(b){b.disabled=false;}" +
+            "var i=document.getElementById('saveInstance');if(i){i.disabled=false;}"
         runCatching { webView.evaluateJavaScript(script) }
     }
 

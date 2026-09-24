@@ -14,11 +14,9 @@ internal class RealMetadataTrackAPI(
 
     override suspend fun getTrack(id: String): MetadataTrack {
         store.cachedTrack(id)?.let { return it }
-        val info = store.cachedStreams(id) ?: run {
-            val fetched = client.streams(id)
-            store.cacheStreams(id, fetched)
-            fetched
-        }
+        val info = store.cachedStreams(id) ?: client.streams(id)
+            ?.also { store.cacheStreams(id, it) }
+            ?: throw IllegalStateException("streams fetch failed for $id")
         val track = info.toTrack(id)
         store.rememberTrack(track)
         return track
@@ -35,6 +33,8 @@ internal class RealMetadataTrackAPI(
         return PaginationResult(
             items = items,
             totalCount = ids.size,
+            // Local saved-set ids are AUTHORITATIVE (the list terminates): page by the fixed limit so failures
+            // never hide tail ids nor re-request failing ids. Account lists keep the slice guard (stale totals).
             nextPagination = if (paging.offset + paging.limit < ids.size) {
                 PaginationStrategy.Offset(paging.offset + paging.limit, paging.limit)
             } else {
@@ -46,17 +46,17 @@ internal class RealMetadataTrackAPI(
     override suspend fun isSavedTracks(ids: List<String>): List<Boolean> = mirror.isSavedTracks(ids)
 
     override suspend fun saveTracks(ids: List<String>) {
-            val already = library.isSavedTracks(ids)
-            val fresh = ids.filterIndexed { i, _ -> !already[i] }
+            // Pass the FULL id set: membership filtering would permanently suppress an id whose save committed
+            // locally but never reached the mirror (repKey unwritten). save() rebinds/dedupes — cheap no-ops.
             library.saveTracks(ids)
-            mirror.save(SavedKind.TRACK, fresh)
+            mirror.save(SavedKind.TRACK, ids)
         }
 
     override suspend fun removeSavedTracks(ids: List<String>) {
 
         mirror.remove(SavedKind.TRACK, ids)
 
-        library.removeTracks(ids)
+        mirror.removeLibraryEntries(SavedKind.TRACK, ids)
 
     }
     override suspend fun recommendationsBasedOnTracks(
@@ -66,10 +66,8 @@ internal class RealMetadataTrackAPI(
         if (seedTrackIds.isEmpty() || limit <= 0) return emptyList()
         return runCatching {
             val out = LinkedHashMap<String, MetadataTrack>()
-            // The endless queue must stay YouTube-Music-only. /streams related
-            // streams are plain YouTube (lives, TV clips, hour-long mixes), so
-            // use the YT Music radio mix instead, which Piped resolves as a
-            // "RDAMVM<videoId>" playlist.
+            // The endless queue must stay YouTube-Music-only; /streams related lists are plain YouTube (lives,
+            // TV clips, mixes). Use the YT Music radio mix instead — resolved as a "RDAMVM<videoId>" playlist.
             for (seed in seedTrackIds.take(2)) {
                 if (out.size >= limit) break
                 for (item in ytmRadioItems(seed)) {
@@ -105,15 +103,13 @@ internal class RealMetadataTrackAPI(
 
     /** The seed artist's catalog from a music_songs search; YTM-only. */
     private suspend fun ytmCatalogTracks(seedVideoId: String): List<MetadataTrack> {
-        val info = store.cachedStreams(seedVideoId) ?: run {
-            val fetched = client.streams(seedVideoId)
-            store.cacheStreams(seedVideoId, fetched)
-            fetched
-        }
+        val info = store.cachedStreams(seedVideoId) ?: client.streams(seedVideoId)
+            ?.also { store.cacheStreams(seedVideoId, it) }
+            ?: throw IllegalStateException("streams fetch failed for $seedVideoId")
         val artist = cleanArtistName(info.uploader)
         if (artist.isBlank()) return emptyList()
         val page = client.search(artist, PipedSearchFilter.MUSIC_SONGS)
-        return page.items
+        return page?.items.orEmpty()
             .filter { it.type == "stream" || it.type == "video" }
             .mapNotNull { it.toTrack() }
             .distinctBy { it.id }

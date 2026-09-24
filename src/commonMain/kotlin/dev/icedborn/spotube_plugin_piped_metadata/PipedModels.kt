@@ -26,11 +26,8 @@ data class PipedSearchPage(
     val nextpage: String? = null,
 )
 
-/**
- * One Piped search / trending / related-stream row. Music search results come
- * back with "url" (watch/channel/playlist), "type", and either "title" (streams)
- * or "name" (albums/artists/playlists).
- */
+/** One Piped search / trending / related-stream row. Music results: "url", "type",
+ * and either "title" (streams) or "name" (albums/artists/playlists). */
 @Serializable
 data class PipedSearchItem(
     val type: String = "",
@@ -87,10 +84,15 @@ data class PipedChannelInfo(
     val relatedStreams: List<PipedSearchItem> = emptyList(),
 )
 
-/** Cached ordered rows of a playlist/album, extended lazily through nextpage. */
+    /** Cached ordered rows of a playlist/album, extended lazily through nextpage. [resumeIndex] is where
+     * the stored [nextpage] token resumes inside [tracks] (recovery merges INSIDE the fresh prefix; -1 = legacy). */
 @Serializable
 data class CachedRows(
     val tracks: List<dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack> = emptyList(),
     val nextpage: String? = null,
     val complete: Boolean = false,
+    val resumeIndex: Int = -1,
+    // epochMillis() of the last LIVE full re-verify of a COMPLETE cache
+    // (Store.page's TTL arm); 0 = never verified this session/upgrade.
+    val lastVerifiedAt: Long = 0,
 )

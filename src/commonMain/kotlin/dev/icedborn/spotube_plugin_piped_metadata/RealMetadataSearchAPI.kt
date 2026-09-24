@@ -50,13 +50,13 @@ class RealMetadataSearchAPI(
         if (query.isBlank()) return emptyPagination()
         return runCatching {
             val page = client.search(query, PipedSearchFilter.VIDEOS, pagination.continuationToken())
-            val items = page.items
+            val items = page?.items.orEmpty()
                 .filter { it.type == "stream" || it.type == "video" }
                 .mapNotNull { item -> item.toTrack()?.also { store.rememberTrack(it) } }
             PaginationResult(
                 items = items.map { MetadataSearchResult.Track(data = it) },
                 totalCount = items.size,
-                nextPagination = nextContinuation(page.nextpage),
+                nextPagination = nextContinuation(page?.nextpage),
             )
         }.getOrDefault(emptyPagination())
     }
@@ -68,13 +68,13 @@ class RealMetadataSearchAPI(
         if (query.isBlank()) return emptyPagination()
         return runCatching {
             val page = client.search(query, PipedSearchFilter.MUSIC_SONGS, pagination.continuationToken())
-            val items = page.items
+            val items = page?.items.orEmpty()
                 .filter { it.type == "stream" || it.type == "video" }
                 .mapNotNull { item -> item.toTrack()?.also { store.rememberTrack(it) } }
             PaginationResult(
                 items = items.map { MetadataSearchResult.Track(data = it) },
                 totalCount = items.size,
-                nextPagination = nextContinuation(page.nextpage),
+                nextPagination = nextContinuation(page?.nextpage),
             )
         }.getOrDefault(emptyPagination())
     }
@@ -86,11 +86,11 @@ class RealMetadataSearchAPI(
         if (query.isBlank()) return emptyPagination()
         return runCatching {
             val page = client.search(query, PipedSearchFilter.MUSIC_ARTISTS, pagination.continuationToken())
-            val items = page.items.mapNotNull { it.toArtist() }
+            val items = page?.items.orEmpty().mapNotNull { it.toArtist() }
             PaginationResult(
                 items = items.map { MetadataSearchResult.Artist(data = it) },
                 totalCount = items.size,
-                nextPagination = nextContinuation(page.nextpage),
+                nextPagination = nextContinuation(page?.nextpage),
             )
         }.getOrDefault(emptyPagination())
     }
@@ -102,11 +102,11 @@ class RealMetadataSearchAPI(
         if (query.isBlank()) return emptyPagination()
         return runCatching {
             val page = client.search(query, PipedSearchFilter.MUSIC_ALBUMS, pagination.continuationToken())
-            val items = page.items.mapNotNull { it.toAlbumBasic() }
+            val items = page?.items.orEmpty().mapNotNull { it.toAlbumBasic() }
             PaginationResult(
                 items = items.map { MetadataSearchResult.Album(data = it) },
                 totalCount = items.size,
-                nextPagination = nextContinuation(page.nextpage),
+                nextPagination = nextContinuation(page?.nextpage),
             )
         }.getOrDefault(emptyPagination())
     }
@@ -118,11 +118,11 @@ class RealMetadataSearchAPI(
         if (query.isBlank()) return emptyPagination()
         return runCatching {
             val page = client.search(query, PipedSearchFilter.MUSIC_PLAYLISTS, pagination.continuationToken())
-            val items = page.items.mapNotNull { it.toPlaylist() }
+            val items = page?.items.orEmpty().mapNotNull { it.toPlaylist() }
             PaginationResult(
                 items = items.map { MetadataSearchResult.Playlist(data = it) },
                 totalCount = items.size,
-                nextPagination = nextContinuation(page.nextpage),
+                nextPagination = nextContinuation(page?.nextpage),
             )
         }.getOrDefault(emptyPagination())
     }
