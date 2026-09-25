@@ -45,6 +45,8 @@ A session belongs to the instance it was created on. Changing the instance signs
 - **Metadata**: tracks, albums, artists, playlists, search and a Home screen.
 - **Home, For you tab**: recently played, your artists, radio mixes from recent plays, similar artists, albums and
   playlists of your most played artists, your playlists and saved albums.
+- **Related artists**: artist pages and the Home "Fans also like" section list artists taken from YouTube Music
+  radio mixes, because Piped has no related-artists endpoint.
 - **Home, Charts tab**: YouTube Music charts for your region, read from the playlists of the "YouTube Music Global
   Charts" channel, because Piped has no charts endpoint.
 
@@ -108,5 +110,3 @@ passwords.
 - Spotube Nightly on Android shows no play or add-to-queue buttons on Home sections made of tracks, such as
   "Recently played" and "Because you listened to", so those tracks cannot be played from Home there. Desktop shows
   the buttons.
-- Piped has no related-artists endpoint. Artist pages show no related artists, and the Home "Fans also like" section
-  is built from the artists in radio mixes.

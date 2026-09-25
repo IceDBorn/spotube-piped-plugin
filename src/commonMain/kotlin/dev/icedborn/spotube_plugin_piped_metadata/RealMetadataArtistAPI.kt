@@ -12,8 +12,11 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeoutOrNull
 
 private const val TOP_TRACKS_LIMIT = 10
+private const val RELATED_TIMEOUT_MS = 8_000L
+private const val RELATED_CACHE_SIZE = 50
 
 private val channelFetches = HashMap<String, CompletableDeferred<PipedChannelInfo?>>()
 
@@ -22,7 +25,11 @@ internal class RealMetadataArtistAPI(
     private val store: EntityStore,
     private val library: LocalLibrary,
     private val mirror: PipedSavedLibrary,
+    // A function, not the track API, so tests can pass a fake radio.
+    private val radio: suspend (seedIds: List<String>) -> List<MetadataTrack> = { emptyList() },
 ) : MetadataArtistAPI {
+
+    private val relatedCache = LinkedHashMap<String, List<MetadataArtist.Basic>>()
 
     override suspend fun getArtist(id: String): MetadataArtist.Detailed =
         syntheticArtist(id) ?: fetchChannel(id).toArtist()
@@ -44,11 +51,13 @@ internal class RealMetadataArtistAPI(
             val top = async { top10Tracks(id, channel) }
             val albums = async { artistAlbumsPage(id, channel, null) }
             val playlists = async { featuredPlaylistsPage(id, channel, null) }
+            val related = async { withTimeoutOrNull(RELATED_TIMEOUT_MS) { relatedFor(id) { top.await() } } }
+            val relatedItems = related.await().orEmpty()
             MetadataArtistOverview(
                 artist = channel.toArtist(),
                 top10Tracks = top.await(),
                 albums = albums.await(),
-                relatedArtists = emptyPagination(),
+                relatedArtists = PaginationResult(relatedItems, relatedItems.size, null),
                 featuredPlaylists = playlists.await(),
             )
         }
@@ -57,7 +66,16 @@ internal class RealMetadataArtistAPI(
     override suspend fun relatedArtists(
         id: String,
         pagination: PaginationStrategy?,
-    ): PaginationResult<MetadataArtist.Basic> = emptyPagination()
+    ): PaginationResult<MetadataArtist.Basic> {
+        if (syntheticArtist(id) != null) return emptyPagination()
+        val items = withTimeoutOrNull(RELATED_TIMEOUT_MS) {
+            relatedFor(id) { top10Tracks(id, fetchChannel(id)) }
+        }.orEmpty()
+        // One page only: the host keys list items by id, so a second page would repeat rows and crash it.
+        val paging = pagination.getOffsetOrDefault()
+        val page = items.drop(paging.offset).take(paging.limit)
+        return PaginationResult(page, items.size, null)
+    }
 
     override suspend fun featuredPlaylists(
         id: String,
@@ -175,6 +193,33 @@ internal class RealMetadataArtistAPI(
             .sortedByDescending { channelIdOf(it.uploaderUrl) == id }
             .mapNotNull { it.toTrack()?.also { track -> store.rememberTrack(track) } }
         return (fromChannel + songs).distinctBy { it.id }.take(TOP_TRACKS_LIMIT)
+    }
+
+    /** Related artists from the YT Music radio of this artist's first two top tracks. Cached, because
+     * the radio is not cached anywhere else and a page visit otherwise costs the requests again.
+     * [top] is a lambda, so a cache hit costs no top-tracks request either. */
+    private suspend fun relatedFor(
+        id: String,
+        top: suspend () -> List<MetadataTrack>,
+    ): List<MetadataArtist.Basic> {
+        if (syntheticArtist(id) != null) return emptyList()
+        val key = canonicalArtistId(id)
+        relatedCache[key]?.let { return it }
+        val seeds = top().take(2).map { it.id }
+        if (seeds.isEmpty()) return emptyList()
+        // The radio request can fail (429/5xx); degrade to no section rather than blank the page.
+        val ranked = orNull("related artists $id") { rankRadioArtists(radio(seeds), setOf(key)) }.orEmpty()
+        if (ranked.isEmpty()) return emptyList()
+        // Radio rows carry no avatars; the channel fetch adds them, is shared per id and cached for hours.
+        val withAvatars = ranked.mapConcurrently { basic ->
+            val channel = orNull { fetchChannel(basic.id) }
+            if (channel != null && channel.name.isNotBlank()) channel.toArtist().toBasic() else basic
+        }
+        // Only a non-empty result is cached: an empty one is often a transient radio failure, and
+        // caching it would hide the section until restart.
+        relatedCache[key] = withAvatars
+        if (relatedCache.size > RELATED_CACHE_SIZE) relatedCache.remove(relatedCache.keys.first())
+        return withAvatars
     }
 
     private suspend fun artistAlbumsPage(

@@ -98,7 +98,9 @@ fun main() {
         )
         val trackApi = RealMetadataTrackAPI(client, store, library, mirror)
         val albumApi = RealMetadataAlbumAPI(client, store, library, mirror, albumLookup)
-        val artistApi = RealMetadataArtistAPI(client, store, library, mirror)
+        val artistApi = RealMetadataArtistAPI(client, store, library, mirror) { seeds ->
+            trackApi.recommendationsBasedOnTracks(seeds, 50)
+        }
         val playlistApi = RealMetadataPlaylistAPI(client, store, library, mirror)
 
         zipline.bind<CoreAPI>(CoreAPI_SERVICE_NAME, core)

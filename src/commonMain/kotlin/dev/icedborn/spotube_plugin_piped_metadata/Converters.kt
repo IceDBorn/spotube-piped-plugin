@@ -264,6 +264,13 @@ internal fun PipedChannelInfo.toArtist(): MetadataArtist.Detailed = MetadataArti
 )
 
 
+internal fun MetadataArtist.Detailed.toBasic() = MetadataArtist.Basic(
+    id = id,
+    name = name,
+    thumbnails = thumbnails,
+    externalUri = externalUri,
+)
+
 internal fun PipedChannelInfo.toUser(): MetadataUser = MetadataUser(
     id = id,
     username = name,

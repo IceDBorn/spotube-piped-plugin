@@ -169,12 +169,7 @@ internal class RealMetadataBrowseAPI(
 
     /** Piped has no related-artists API: take the artists of the radio mixes that the user does not play yet. */
     private suspend fun fansSection(seeds: List<MetadataTrack>, known: List<String>): MetadataBrowseSection {
-        val knownIds = known.toHashSet()
-        val candidates = seeds.flatMap { radioFor(it) }
-            .mapNotNull { it.artists.firstOrNull() }
-            .filter { it.id.startsWith("UC") && canonicalArtistId(it.id) !in knownIds }
-            .distinctBy { canonicalArtistId(it.id) }
-            .take(12)
+        val candidates = rankRadioArtists(seeds.flatMap { radioFor(it) }, known.toHashSet())
         // Radio rows carry no artist avatars; the channel fetch adds them and is cached for hours.
         val items = candidates.mapConcurrently { basic -> orNull { artists.getArtist(basic.id) }?.toBasic() ?: basic }
             .map { MetadataBrowseItem.Artist(it) }
@@ -250,12 +245,5 @@ private fun MetadataAlbum.Detailed.toBasic() = MetadataAlbum.Basic(
     thumbnails = thumbnails,
     albumType = albumType,
     artists = artists,
-    externalUri = externalUri,
-)
-
-private fun MetadataArtist.Detailed.toBasic() = MetadataArtist.Basic(
-    id = id,
-    name = name,
-    thumbnails = thumbnails,
     externalUri = externalUri,
 )
