@@ -73,7 +73,7 @@ class RealCoreAPI(
             " Optionally give it a separate playback instance for audio." +
             " Log in on that instance to sync saved items to the account and keep an" +
             " offline cache on this device; without an account everything stays local." +
-            " Source: https://github.com/IceDBorn/spotube-piped-plugins"
+            " Source: https://github.com/IceDBorn/spotube-piped-plugin"
 
     @OptIn(ExperimentalCoroutinesApi::class)
     override suspend fun login() {

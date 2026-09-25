@@ -24,9 +24,9 @@ spotubePlugin {
     )
     abilities = listOf(PluginAbility.AUDIO, PluginAbility.METADATA)
     license = "AGPL-3.0-or-later"
-    contact = "https://github.com/IceDBorn/spotube-piped-plugins"
-    repository = "https://github.com/IceDBorn/spotube-piped-plugins"
-    bugs = "https://github.com/IceDBorn/spotube-piped-plugins/issues"
+    contact = "https://github.com/IceDBorn/spotube-piped-plugin"
+    repository = "https://github.com/IceDBorn/spotube-piped-plugin"
+    bugs = "https://github.com/IceDBorn/spotube-piped-plugin/issues"
 }
 
 kotlin {
