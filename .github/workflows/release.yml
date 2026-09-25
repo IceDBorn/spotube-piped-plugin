@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      nightly:
+        description: Nightly release (moves the "nightly" tag, marked as prerelease)
+        type: boolean
+        default: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Test
+        run: ./gradlew :jvmTest :jsNodeTest
+
+      - name: Build
+        run: ./gradlew :generatePluginJson --rerun-tasks :packageProductionPlugin
+
+      - name: Read version
+        id: version
+        run: |
+          v=$(sed -n '/spotubePlugin {/,/}/ s/.*version = "\(.*\)"/\1/p' build.gradle.kts | head -1)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare asset
+        run: cp build/distributions/plugin-production.smplug spotube-plugin-piped.smplug
+
+      # action-gh-release reuses an existing tag but leaves it where it was, so a nightly
+      # would keep pointing at the first commit while only the asset moved.
+      - name: Move nightly tag
+        if: inputs.nightly
+        run: |
+          git tag -f nightly
+          git push -f origin nightly
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ inputs.nightly && 'nightly' || steps.version.outputs.version }}
+          prerelease: ${{ inputs.nightly }}
+          files: spotube-plugin-piped.smplug
+          fail_on_unmatched_files: true
