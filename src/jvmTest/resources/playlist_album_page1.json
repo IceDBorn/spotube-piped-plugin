@@ -1,0 +1,40 @@
+{
+  "name": "Album - Single",
+  "description": "the album",
+  "thumbnailUrl": "https://piped.example/cover.jpg",
+  "uploader": "Alpha Artist",
+  "uploaderUrl": "https://www.youtube.com/channel/UCchannelalpha01a0000000",
+  "uploaderAvatar": "https://piped.example/av.jpg",
+  "videos": 3,
+  "nextpage": "PT2",
+  "relatedStreams": [
+    {
+      "type": "stream",
+      "url": "https://www.youtube.com/watch?v=s00000000",
+      "title": "Track 0",
+      "name": "Track 0",
+      "thumbnail": "https://piped.example/t.jpg",
+      "uploaderName": "Alpha Artist",
+      "uploaderUrl": "https://www.youtube.com/channel/UCchannelalpha01a0000000",
+      "duration": 200,
+      "views": 1,
+      "subscribers": -1,
+      "verified": false,
+      "description": null
+    },
+    {
+      "type": "stream",
+      "url": "https://www.youtube.com/watch?v=s00000010",
+      "title": "Track 1",
+      "name": "Track 1",
+      "thumbnail": "https://piped.example/t.jpg",
+      "uploaderName": "Alpha Artist",
+      "uploaderUrl": "https://www.youtube.com/channel/UCchannelalpha01a0000000",
+      "duration": 201,
+      "views": 1,
+      "subscribers": -1,
+      "verified": false,
+      "description": null
+    }
+  ]
+}

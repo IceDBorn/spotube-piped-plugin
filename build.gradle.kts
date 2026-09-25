@@ -37,6 +37,9 @@ kotlin {
         binaries.executable()
     }
 
+    // Tests only; the shipped plugin stays JS/Zipline.
+    jvm()
+
     sourceSets {
         commonMain.dependencies {
             api(libs.zipline.core)
@@ -44,6 +47,10 @@ kotlin {
             api(libs.semver)
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
+        }
+        jvmTest.dependencies {
+            implementation(kotlin("test"))
+            implementation(libs.kotlinx.coroutines.test)
         }
     }
 }

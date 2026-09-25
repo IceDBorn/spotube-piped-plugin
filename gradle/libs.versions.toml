@@ -15,6 +15,7 @@ kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serializa
 spotube-plugin-interfaces = { module = "dev.krtirtho.spotube:plugin_interfaces", version.ref = "spotube-plugin-interfaces" }
 zipline-core = { module = "app.cash.zipline:zipline", version.ref = "ziplineVersion" }
 semver = { module = "net.swiftzer.semver:semver", version.ref = "semver" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
 
 [plugins]
 
