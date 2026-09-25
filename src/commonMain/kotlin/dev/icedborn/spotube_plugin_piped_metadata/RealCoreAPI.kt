@@ -43,6 +43,7 @@ class RealCoreAPI(
     private val webView: WebViewAPI,
     private val session: AccountSession,
     private val instanceSource: InstanceSource,
+    private val region: RegionSetting,
     private val onLogin: suspend () -> Unit = {},
 ) : CoreAPI {
 
@@ -146,7 +147,8 @@ class RealCoreAPI(
         val subscriber = scope.launch {
             webView.postMessagesFlow().onEach { messages.trySend(it) }.launchIn(this)
             val lightTheme = runCatching { storage.getString(FORM_THEME_KEY) }.getOrNull() == "light"
-            webView.navigateToHTML(settingsFormHtml(instance, playback, username, lightTheme))
+            val html = settingsFormHtml(instance, playback, username, lightTheme, region.stored(), region.detected())
+            webView.navigateToHTML(html)
         }
         try {
             while (true) {
@@ -154,6 +156,10 @@ class RealCoreAPI(
                     ?: throw IllegalStateException("the settings form was closed without saving")
                 val fields = runCatching { json.parseToJsonElement(message).jsonObject }.getOrNull() ?: continue
                 val action = fields["action"]?.jsonPrimitive?.contentOrNull
+                if (action == "region") {
+                    runCatching { region.set(fields["region"]?.jsonPrimitive?.contentOrNull.orEmpty()) }
+                    continue
+                }
                 if (action == "theme") {
                     saveTheme(fields)
                     continue

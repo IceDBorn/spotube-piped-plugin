@@ -4,6 +4,8 @@ import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI
 import dev.krtirtho.plugin_interfaces.host_apis.HttpMethod
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 
     /** Decodes a /playlists page: null = FAILED fetch, never authoritative-empty. '{}'/'{"error":…}'
      * (throttles) decodes to an empty page that reads as proven-empty everywhere — playlist(), mirror walk. */
@@ -75,13 +77,30 @@ class PipedClient(
         return json.decodeFromString(body)
     }
 
-    suspend fun trending(region: String): List<PipedSearchItem> {
-        val body = get("/trending?region=$region")
-        return try {
-            json.decodeFromString<List<PipedSearchItem>>(body)
-        } catch (e: Exception) {
-            emptyList()
+    /** Every playlist on a channel's playlists tab as (playlistId, name), walking at most [pageLimit] pages.
+     * Null when the first fetch fails, so callers can keep an older copy. */
+    suspend fun channelPlaylists(channelId: String, pageLimit: Int = 20): List<Pair<String, String>>? {
+        val channel = orNull { json.parseToJsonElement(get("/channel/${channelId.percentEncoded()}")) } as? JsonObject
+            ?: return null
+        val tab = (channel["tabs"] as? JsonArray)
+            ?.mapNotNull { it as? JsonObject }
+            ?.firstOrNull { (it["name"] as? JsonPrimitive)?.contentOrNull == "playlists" }
+        val data = (tab?.get("data") as? JsonPrimitive)?.contentOrNull ?: return null
+        val out = mutableListOf<Pair<String, String>>()
+        var nextpage: String? = null
+        for (page in 0 until pageLimit) {
+            val query = "data=${data.percentEncoded()}" + (nextpage?.let { "&nextpage=${it.percentEncoded()}" } ?: "")
+            val root = orNull { json.parseToJsonElement(get("/channels/tabs?$query")) } as? JsonObject
+                ?: return if (page == 0) null else out
+            (root["content"] as? JsonArray).orEmpty().forEach { item ->
+                val obj = item as? JsonObject ?: return@forEach
+                val id = playlistIdOf((obj["url"] as? JsonPrimitive)?.contentOrNull.orEmpty())
+                val name = (obj["name"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+                if (id.isNotEmpty() && name.isNotEmpty()) out += id to name
+            }
+            nextpage = (root["nextpage"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() } ?: break
         }
+        return out
     }
 
     private suspend fun get(path: String): String {

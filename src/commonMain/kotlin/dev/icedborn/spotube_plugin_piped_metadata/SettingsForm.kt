@@ -1,18 +1,36 @@
 package dev.icedborn.spotube_plugin_piped_metadata
 
 /** Settings page shown in the plugin webview; posts JSON over the host bridge. */
-internal fun settingsFormHtml(instance: String, playback: String, username: String, lightTheme: Boolean): String {
+internal fun settingsFormHtml(
+    instance: String,
+    playback: String,
+    username: String,
+    lightTheme: Boolean,
+    region: String,
+    detectedRegion: String?,
+): String {
     val values = mapOf(
         "THEME" to if (lightTheme) "light" else "dark",
         "INSTANCE" to escapeAttribute(instance),
         "PLAYBACK" to escapeAttribute(playback),
         "USERNAME" to escapeAttribute(username),
+        "REGIONS" to regionOptions(region, detectedRegion),
     )
     // One pass, so a value that contains a placeholder name is never substituted again.
     return PLACEHOLDER.replace(FORM_HTML) { values[it.groupValues[1]] ?: it.value }
 }
 
 private val PLACEHOLDER = Regex("__([A-Z]+)__")
+
+private fun regionOptions(selected: String, detected: String?): String {
+    val auto = "Auto (" + (detected?.let { CHART_COUNTRIES[it] } ?: "Global") + ")"
+    val options = listOf(REGION_AUTO to auto, REGION_GLOBAL to "Global") +
+        CHART_COUNTRIES.entries.sortedBy { it.value }.map { it.key to it.value }
+    return options.joinToString("") { (code, name) ->
+        val mark = if (code == selected) " selected" else ""
+        "<option value=\"$code\"$mark>${escapeAttribute(name)}</option>"
+    }
+}
 
 private fun escapeAttribute(value: String): String = value
     .replace("&", "&amp;")
@@ -57,7 +75,10 @@ private val FORM_HTML = """<!doctype html>
           font-size: 14px; color: var(--fg); background: var(--field); border: 1px solid var(--border);
           border-radius: 8px; }
   input::placeholder { color: var(--muted); }
-  input:focus { outline: none; border-color: var(--accent); }
+  select { width: 100%; box-sizing: border-box; padding: 10px 12px; font-size: 14px; color: var(--fg);
+           background: var(--field); border: 1px solid var(--border); border-radius: 8px; font-family: inherit; }
+  .hint { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 6px 0 0; }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
   input[type=checkbox] { accent-color: var(--accent); }
   .check { display: flex; align-items: center; gap: 10px; margin-top: 16px; font-size: 14px;
            color: var(--fg); text-transform: none; letter-spacing: normal; }
@@ -120,6 +141,11 @@ private val FORM_HTML = """<!doctype html>
     <div class="row">
       <button id="saveInstance" class="primary action" type="submit">Save instance</button>
     </div>
+
+    <label for="region">Charts region</label>
+    <select id="region">__REGIONS__</select>
+    <p class="hint">Picks the YouTube Music charts on Home. Auto follows the system time zone, and countries
+    without charts use Global. Spotube keeps Home until it restarts, so a change shows after a restart.</p>
   </form>
 
   <p id="status"></p>
@@ -182,6 +208,10 @@ private val FORM_HTML = """<!doctype html>
     document.documentElement.dataset.theme = light ? 'light' : 'dark';
     refreshTheme();
     send(JSON.stringify({ action: 'theme', light: light }));
+  });
+  el('region').addEventListener('change', function () {
+    send(JSON.stringify({ action: 'region', region: el('region').value }));
+    setStatus('Region saved. Restart Spotube to refresh Home.', false);
   });
   el('tabLogin').addEventListener('click', function () { showTab('login'); });
   el('tabInstance').addEventListener('click', function () { showTab('instance'); });

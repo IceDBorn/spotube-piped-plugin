@@ -1,5 +1,6 @@
 package dev.icedborn.spotube_plugin_piped
 
+import kotlin.coroutines.cancellation.CancellationException
 import dev.krtirtho.plugin_interfaces.plugin_apis.audio.AudioAPI
 import dev.krtirtho.plugin_interfaces.plugin_apis.audio.AudioFormat
 import dev.krtirtho.plugin_interfaces.plugin_apis.audio.AudioQuality
@@ -13,7 +14,11 @@ private const val MAX_SOURCES = 5
 private const val PLAYABLE_CONFIDENCE = 0.8f
 private val YOUTUBE_ID_REGEX = Regex("[A-Za-z0-9_-]{11}")
 
-class RealPipedAudioAPI(private val client: PipedClient) : AudioAPI {
+class RealPipedAudioAPI(
+    private val client: PipedClient,
+    // Called for every track the host asks audio for; the metadata side logs it as a play.
+    private val onTrackRequested: suspend (MetadataTrack) -> Unit = {},
+) : AudioAPI {
 
     override val supportedQualities: List<AudioFormat> = listOf(
         AudioFormat(
@@ -35,6 +40,13 @@ class RealPipedAudioAPI(private val client: PipedClient) : AudioAPI {
     )
 
     override suspend fun getStreamsByTrack(track: MetadataTrack): List<AudioSource> {
+        try {
+            onTrackRequested(track)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Logging a play must never block playback.
+        }
         track.externalUri?.let { uri ->
             val videoId = extractVideoId(uri)
             if (videoId != null) {
