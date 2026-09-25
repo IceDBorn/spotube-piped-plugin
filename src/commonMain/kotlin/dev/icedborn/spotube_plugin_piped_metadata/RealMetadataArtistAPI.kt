@@ -41,7 +41,7 @@ internal class RealMetadataArtistAPI(
             top10Tracks = top,
             albums = albums,
             relatedArtists = emptyPagination(),
-            featuredPlaylists = emptyPagination(),
+            featuredPlaylists = featuredPlaylistsPage(id, channel, null),
         )
     }
 
@@ -53,7 +53,11 @@ internal class RealMetadataArtistAPI(
     override suspend fun featuredPlaylists(
         id: String,
         pagination: PaginationStrategy?,
-    ): PaginationResult<MetadataPlaylist> = emptyPagination()
+    ): PaginationResult<MetadataPlaylist> {
+        if (syntheticArtist(id) != null) return emptyPagination()
+        val channel = fetchChannel(id)
+        return featuredPlaylistsPage(id, channel, pagination)
+    }
 
     override suspend fun getArtistAlbums(
         id: String,
@@ -162,7 +166,7 @@ internal class RealMetadataArtistAPI(
             // (and title-matching rows) mix in albums by other artists.
             val items = page?.items.orEmpty()
                 .filter { it.type == "playlist" }
-                .filter { albumMatchesArtist(it, id, query) }
+                .filter { uploadedByArtist(it, id, query) }
                 .distinctBy { playlistIdOf(it.url) }
                 .mapNotNull { it.toAlbumDetailed() }
             PaginationResult(
@@ -172,14 +176,41 @@ internal class RealMetadataArtistAPI(
             )
         }.getOrDefault(emptyPagination())
     }
+
+    private suspend fun featuredPlaylistsPage(
+        id: String,
+        channel: PipedChannelInfo,
+        pagination: PaginationStrategy?,
+    ): PaginationResult<MetadataPlaylist> {
+        // The artist's own playlists first, then others that name the artist (fan and label playlists).
+        // Unlike albums, a name match is enough here: many artists upload no playlists of their own.
+        val query = cleanArtistName(channel.name)
+        if (query.isBlank()) return emptyPagination()
+        return runCatching {
+            val page = client.search(query, PipedSearchFilter.PLAYLISTS, pagination.continuationToken())
+            val (own, others) = page?.items.orEmpty()
+                .filter { it.type == "playlist" }
+                .distinctBy { playlistIdOf(it.url) }
+                .partition { uploadedByArtist(it, id, query) }
+            val items = (own + others.filter { namesArtist(it, query) }).mapNotNull { it.toPlaylist() }
+            PaginationResult(
+                items = items,
+                totalCount = items.size,
+                nextPagination = nextContinuation(page?.nextpage),
+            )
+        }.getOrDefault(emptyPagination())
+    }
 }
 
-/** The album is this artist's when its uploader channel id matches; a row without a usable channel id
- * (or a different official channel) passes only on an EXACT cleaned uploader-name match. Album titles are
- * NOT matched: a title that merely mentions the artist admits albums by other artists. */
-private fun albumMatchesArtist(album: PipedSearchItem, channelId: String, artistName: String): Boolean {
-    val uploaderId = channelIdOf(album.uploaderUrl)
+private fun namesArtist(item: PipedSearchItem, artistName: String): Boolean =
+    (item.name.ifBlank { item.title }).contains(artistName, ignoreCase = true) ||
+        item.uploaderName.contains(artistName, ignoreCase = true)
+
+/** The row is this artist's when its uploader channel id matches; otherwise only an EXACT cleaned
+ * uploader-name match passes. Titles are NOT matched: a title that mentions the artist admits other artists' rows. */
+private fun uploadedByArtist(item: PipedSearchItem, channelId: String, artistName: String): Boolean {
+    val uploaderId = channelIdOf(item.uploaderUrl)
     if (uploaderId == channelId) return true
-    val uploaderName = cleanArtistName(album.uploaderName)
+    val uploaderName = cleanArtistName(item.uploaderName)
     return uploaderName.equals(artistName, ignoreCase = true)
 }
