@@ -8,8 +8,14 @@ import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationResu
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.playlist.MetadataPlaylist
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
+import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 
 private const val TOP_TRACKS_LIMIT = 10
+
+private val channelFetches = HashMap<String, CompletableDeferred<PipedChannelInfo?>>()
 
 internal class RealMetadataArtistAPI(
     private val client: PipedClient,
@@ -34,15 +40,18 @@ internal class RealMetadataArtistAPI(
             )
         }
         val channel = fetchChannel(id)
-        val top = top10Tracks(id, channel)
-        val albums = artistAlbumsPage(id, channel, null)
-        return MetadataArtistOverview(
-            artist = channel.toArtist(),
-            top10Tracks = top,
-            albums = albums,
-            relatedArtists = emptyPagination(),
-            featuredPlaylists = featuredPlaylistsPage(id, channel, null),
-        )
+        return coroutineScope {
+            val top = async { top10Tracks(id, channel) }
+            val albums = async { artistAlbumsPage(id, channel, null) }
+            val playlists = async { featuredPlaylistsPage(id, channel, null) }
+            MetadataArtistOverview(
+                artist = channel.toArtist(),
+                top10Tracks = top.await(),
+                albums = albums.await(),
+                relatedArtists = emptyPagination(),
+                featuredPlaylists = playlists.await(),
+            )
+        }
     }
 
     override suspend fun relatedArtists(
@@ -73,9 +82,9 @@ internal class RealMetadataArtistAPI(
         val paging = pagination.getOffsetOrDefault()
         val ids = mirror.allSavedArtistIds()
         val slice = ids.drop(paging.offset).take(paging.limit)
-        val items = slice.mapNotNull { id ->
+        val items = slice.mapConcurrently { id ->
             syntheticArtist(id) ?: runCatching { fetchChannel(id).toArtist() }.getOrNull()
-        }
+        }.filterNotNull()
         return PaginationResult(
             items = items,
             totalCount = ids.size,
@@ -121,13 +130,30 @@ internal class RealMetadataArtistAPI(
     }
 
     private suspend fun fetchChannel(id: String): PipedChannelInfo {
-        // Same cached-value trust as channelNameFor (PipedSavedLibrary): a cached channel that decoded blank is a
-        // MISS and re-fetched — CHANNEL_KEY is never invalidated, so trusting it would render the artist empty forever.
-        store.cachedChannel(id)?.takeIf { it.name.isNotBlank() }?.let { return it }
-        return client.channel(id)?.also { store.cacheChannel(id, it) }
-            // Never cache a throttled fetch as a blank channel (CHANNEL_KEY is never invalidated). Return a
-            // TRANSIENT blank instead of throwing — the unwrapped screens would hard-fail on a routine 429/5xx.
-            ?: PipedChannelInfo()
+        // A cached channel that decoded blank is a MISS (same trust rule as channelNameFor in PipedSavedLibrary).
+        val cached = store.cachedChannel(id)?.takeIf { it.name.isNotBlank() }
+        if (cached != null && store.channelFresh(id)) return cached
+        // Concurrent getArtist/artistOverview calls for one id share a single request.
+        channelFetches[id]?.let { return runCatching { it.await() }.getOrNull() ?: cached ?: PipedChannelInfo() }
+        val pending = CompletableDeferred<PipedChannelInfo?>()
+        channelFetches[id] = pending
+        var fetched: PipedChannelInfo? = null
+        try {
+            fetched = try {
+                client.channel(id)?.takeIf { it.name.isNotBlank() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            }
+        } finally {
+            channelFetches.remove(id)
+            pending.complete(fetched)
+        }
+        if (fetched != null) store.cacheChannel(id, fetched)
+        // A failed fetch serves the stale copy, or a TRANSIENT blank: never cached, and never thrown
+        // (the screens would hard-fail on a routine 429/5xx).
+        return fetched ?: cached ?: PipedChannelInfo()
     }
 
     /** Topic channels carry no uploads, so channel videos are mixed with a YT Music song search for the artist

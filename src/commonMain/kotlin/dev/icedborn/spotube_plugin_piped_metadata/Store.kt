@@ -4,7 +4,9 @@ import dev.krtirtho.plugin_interfaces.host_apis.PersistedStorageAPI
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationResult
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
@@ -19,6 +21,7 @@ import kotlinx.serialization.json.putJsonArray
 private const val TRACK_KEY = "track:"
 private const val LIST_KEY = "list:"
 private const val CHANNEL_KEY = "channel:"
+private const val CHANNEL_AT_KEY = "channel.at:"
 private const val STREAMS_KEY = "streams:"
 private const val TRACK_ALBUM_KEY = "track-album:"
 private const val LIBRARY_KEY = "piped.library"
@@ -28,6 +31,12 @@ private const val ACCOUNT_STATE_KEY = "acct.state"
 /** COMPLETE playlists/albums are re-verified at most once per this window: they have no refresh path,
  * so a web-side edit after the EOF would stay invisible forever. */
 private const val COMPLETE_CACHE_VERIFY_TTL_MS = 15 * 60_000L
+
+/** Channels (top tracks, uploads, avatar) are re-fetched after this age; a failed re-fetch serves the stale copy. */
+internal const val CHANNEL_CACHE_TTL_MS = 12 * 60 * 60_000L
+
+/** In-memory entry cap; older entries fall back to host storage. */
+private const val MEMORY_LIMIT = 2_000
 
 /** Row cache prefix shared with PlaylistRows so account playlists load offline. */
 internal const val PLAYLIST_ROWS_PREFIX = "playlist.rows:"
@@ -58,21 +67,55 @@ data class AccountCacheState(
  * so converted entities and revisit pages cost zero network calls. */
 class EntityStore(private val storage: PersistedStorageAPI) {
 
-    private val memory = mutableMapOf<String, JsonElement>()
+    private val memory = LinkedHashMap<String, JsonElement>()
+    // Keys known to be absent from host storage, so repeated misses skip the host call.
+    private val missing = HashSet<String>()
+    // Last decoded value per key, reused while the stored element is the same instance.
+    private val decoded = HashMap<String, Pair<JsonElement, Any?>>()
+
+    private fun remember(key: String, value: JsonElement) {
+        memory.remove(key)
+        memory[key] = value
+        missing.remove(key)
+        if (memory.size > MEMORY_LIMIT) {
+            val oldest = memory.keys.first()
+            memory.remove(oldest)
+            decoded.remove(oldest)
+        }
+    }
 
     suspend fun get(key: String): JsonElement? {
         memory[key]?.let { return it }
-        val raw = storage.getString(key) ?: return null
-        return runCatching { json.parseToJsonElement(raw) }.getOrNull()?.also { memory[key] = it }
+        if (key in missing) return null
+        val raw = storage.getString(key)
+        if (raw == null) {
+            if (missing.size > MEMORY_LIMIT * 5) missing.clear()
+            missing += key
+            return null
+        }
+        return runCatching { json.parseToJsonElement(raw) }.getOrNull()?.also { remember(key, it) }
+    }
+
+    /** [get] plus decoding, memoized so hot readers do not re-decode large blobs on every call. */
+    @Suppress("UNCHECKED_CAST")
+    suspend fun <T> getDecoded(key: String, serializer: KSerializer<T>): T? {
+        val raw = get(key) ?: return null
+        decoded[key]?.let { (element, value) -> if (element === raw) return value as T? }
+        val value = runCatching { json.decodeFromJsonElement(serializer, raw) }.getOrNull()
+        decoded[key] = raw to value
+        return value
     }
 
     suspend fun put(key: String, value: JsonElement) {
-        memory[key] = value
+        if (memory[key] == value) return
+        remember(key, value)
         runCatching { storage.putString(key, value.toString()) }
     }
 
     suspend fun remove(key: String) {
         memory.remove(key)
+        decoded.remove(key)
+        missing += key
         runCatching { storage.remove(key) }
     }
 
@@ -80,36 +123,40 @@ class EntityStore(private val storage: PersistedStorageAPI) {
         put(TRACK_KEY + track.id, json.encodeToJsonElement(track))
     }
 
-    suspend fun cachedTrack(id: String): MetadataTrack? {
-        val raw = get(TRACK_KEY + id) ?: return null
-        return runCatching { json.decodeFromJsonElement<MetadataTrack>(raw) }.getOrNull()
-    }
+    suspend fun cachedTrack(id: String): MetadataTrack? = getDecoded(TRACK_KEY + id, MetadataTrack.serializer())
 
-    suspend fun cachedAlbumPlaylist(id: String): PipedPlaylistPage? {
-        val raw = get(LIST_KEY + id) ?: return null
-        return runCatching { json.decodeFromJsonElement<PipedPlaylistPage>(raw) }.getOrNull()
-    }
+    suspend fun cachedAlbumPlaylist(id: String): PipedPlaylistPage? =
+        getDecoded(LIST_KEY + id, PipedPlaylistPage.serializer())
+
+    // Page-1 fetch times from this process; the row pager skips its page-1 anchor right after one.
+    private val listFetchedAt = HashMap<String, Long>()
 
     suspend fun cacheAlbumPlaylist(id: String, page: PipedPlaylistPage) {
+        listFetchedAt[id] = epochMillis()
         put(LIST_KEY + id, json.encodeToJsonElement(page))
     }
 
-    suspend fun cachedChannel(id: String): PipedChannelInfo? {
-        val raw = get(CHANNEL_KEY + id) ?: return null
-        return runCatching { json.decodeFromJsonElement<PipedChannelInfo>(raw) }.getOrNull()
+    fun albumPlaylistFetchedWithin(id: String, windowMs: Long): Boolean =
+        listFetchedAt[id]?.let { epochMillis() - it < windowMs } == true
+
+    suspend fun cachedChannel(id: String): PipedChannelInfo? = getDecoded(CHANNEL_KEY + id, PipedChannelInfo.serializer())
+
+    /** Entries cached before timestamps existed count as stale. */
+    suspend fun channelFresh(id: String): Boolean {
+        val at = (get(CHANNEL_AT_KEY + id) as? JsonPrimitive)?.contentOrNull?.toLongOrNull() ?: return false
+        return epochMillis() - at < CHANNEL_CACHE_TTL_MS
     }
 
     suspend fun cacheChannel(id: String, info: PipedChannelInfo) {
         put(CHANNEL_KEY + id, json.encodeToJsonElement(info))
+        put(CHANNEL_AT_KEY + id, JsonPrimitive(epochMillis().toString()))
     }
 
-    suspend fun cachedStreams(id: String): PipedStreamsInfo? {
-        val raw = get(STREAMS_KEY + id) ?: return null
-        return runCatching { json.decodeFromJsonElement<PipedStreamsInfo>(raw) }.getOrNull()
-    }
+    suspend fun cachedStreams(id: String): PipedStreamsInfo? = getDecoded(STREAMS_KEY + id, PipedStreamsInfo.serializer())
 
+    // relatedStreams (about 20 rows) is never read back from this cache.
     suspend fun cacheStreams(id: String, info: PipedStreamsInfo) {
-        put(STREAMS_KEY + id, json.encodeToJsonElement(info))
+        put(STREAMS_KEY + id, json.encodeToJsonElement(info.copy(relatedStreams = emptyList())))
     }
 
     /** Album id resolved for a track id; "none" marks a failed lookup so it is not retried. */
@@ -122,10 +169,7 @@ class EntityStore(private val storage: PersistedStorageAPI) {
         put(TRACK_ALBUM_KEY + trackId, JsonPrimitive(albumId))
     }
 
-    suspend fun cachedAccountState(): AccountCacheState? {
-        val raw = get(ACCOUNT_STATE_KEY) ?: return null
-        return runCatching { json.decodeFromJsonElement<AccountCacheState>(raw) }.getOrNull()
-    }
+    suspend fun cachedAccountState(): AccountCacheState? = getDecoded(ACCOUNT_STATE_KEY, AccountCacheState.serializer())
 
     suspend fun cacheAccountState(state: AccountCacheState) {
         put(ACCOUNT_STATE_KEY, json.encodeToJsonElement(state))
@@ -213,10 +257,8 @@ class LocalLibrary(private val store: EntityStore) {
 
     // ── locally created playlists ──────────────────────────────────────────
 
-    suspend fun storedPlaylists(): List<StoredPlaylist> {
-        val raw = store.get(PLAYLISTS_KEY) ?: return emptyList()
-        return runCatching { json.decodeFromJsonElement<List<StoredPlaylist>>(raw) }.getOrDefault(emptyList())
-    }
+    suspend fun storedPlaylists(): List<StoredPlaylist> =
+        store.getDecoded(PLAYLISTS_KEY, ListSerializer(StoredPlaylist.serializer())).orEmpty()
 
     private suspend fun saveStoredPlaylists(records: List<StoredPlaylist>) {
         store.put(PLAYLISTS_KEY, json.encodeToJsonElement(records))
@@ -233,6 +275,12 @@ class LocalLibrary(private val store: EntityStore) {
         saveStoredPlaylists(storedPlaylists().filterNot { it.id == id })
     }
 }
+
+// Last page-1 anchor + verify per rows key. Shared by PlaylistRows (created per call) and rowsFor.
+internal val openCacheVerifiedAt = HashMap<String, Long>()
+
+internal fun openCacheRecentlyVerified(key: String): Boolean =
+    openCacheVerifiedAt[key]?.let { epochMillis() - it < OPEN_CACHE_VERIFY_WINDOW_MS } == true
 
 // REVERIFY_LIMIT is shared from PipedSavedLibrary.kt (same package): one
 // budget for both cache-extender twins over the shared rows keyspace.
@@ -251,9 +299,12 @@ class PlaylistRows(
         knownTotal: Int,
     ): PaginationResult<MetadataTrack> {
         val key = (if (isAlbum) "album.rows:" else PLAYLIST_ROWS_PREFIX) + id
-        var rows = store.get(key)?.let { raw ->
-            runCatching { json.decodeFromJsonElement<CachedRows>(raw) }.getOrNull()
-        } ?: seedFromAlbumCache(id, album)
+        val stored = store.getDecoded(key, CachedRows.serializer())
+        var rows = stored ?: seedFromAlbumCache(id, album)
+        // A seed from a page 1 fetched moments ago is already anchored: skip the re-fetch below.
+        // A token-less open cache still needs the anchor, which is its only live chain.
+        val recentlyVerified = !rows.nextpage.isNullOrBlank() && (openCacheRecentlyVerified(key) ||
+            (stored == null && store.albumPlaylistFetchedWithin(id, OPEN_CACHE_VERIFY_WINDOW_MS)))
 
         // Live continuation healed from this call's anchor/verify chain, used by the extension loop below
         // (declared here: the loop runs after the anchor/verify block closes).
@@ -328,7 +379,9 @@ class PlaylistRows(
         }
         // The extension gate ALSO opens for IN-SPAN windows on over-budget caches: the old budget-only verify
         // never saw a shrunken playlist, so in-span requests served ghost rows forever. Window-granular verifying.
-        if (!rows.complete && (rows.tracks.size < paging.offset + paging.limit || rows.tracks.size > REVERIFY_LIMIT)) {
+        if (!rows.complete && !recentlyVerified &&
+            (rows.tracks.size < paging.offset + paging.limit || rows.tracks.size > REVERIFY_LIMIT)
+        ) {
             // First-page generation anchor (mirrors rowsFor): an out-of-band edit before the cursor shifts every
             // continuation silently; a page-1 change invalidates the whole cache — re-seed from a FRESH fetch.
             val anchor = runCatching { client.playlist(id) }.getOrNull()
@@ -440,6 +493,7 @@ class PlaylistRows(
                 liveResume = anchorConverted
                 anchorLiveRaw = anchor.relatedStreams.size
             }
+            if (anchor != null) openCacheVerifiedAt[key] = epochMillis()
         }
         while (rows.tracks.size < paging.offset + paging.limit && !rows.complete) {
             // Same recovery policy as the rowsFor twin: a NULL-token open cache means "re-anchor from page 1",

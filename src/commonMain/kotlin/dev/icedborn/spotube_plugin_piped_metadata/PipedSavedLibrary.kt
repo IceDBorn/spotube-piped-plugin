@@ -5,6 +5,10 @@ import kotlin.coroutines.cancellation.CancellationException
 import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI
 import dev.krtirtho.plugin_interfaces.host_apis.HttpMethod
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
@@ -30,6 +34,8 @@ private const val ACCOUNT_PAGE_LIMIT = 6
 // Shared by both cache-extender twins (Store.kt PlaylistRows.page() / rowsFor()): a divergence here
 // silently splits how the same persisted CachedRows keyspace heals between the two readers.
 internal const val REVERIFY_LIMIT = 300
+/** Open row caches skip the page-1 anchor + span verify for this long after one ran, so scrolling costs one fetch per page. */
+internal const val OPEN_CACHE_VERIFY_WINDOW_MS = 2 * 60_000L
 /** Resolution attempts per video before it is permanently marked unresolvable ('none'). */
 private const val RESOLUTION_RETRY_LIMIT = 3
 // How long an exhaustion latch stays before the video is retried: a transient-outage latch must not be
@@ -57,6 +63,7 @@ internal class PipedSavedLibrary(
 ) {
 
     private val refreshMutex = Mutex()
+    private val refreshScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     private fun playlistKey(kind: SavedKind) = "saved.playlist:${kind.name.lowercase()}"
     private fun repKey(kind: SavedKind, entityId: String) = "saved.rep:${kind.name.lowercase()}:$entityId"
@@ -142,9 +149,19 @@ internal class PipedSavedLibrary(
 
     // ── cache refresh ──────────────────────────────────────────────────────────
 
-    /** Refresh when a session exists, the TTL elapsed, and no refresh is running. Fail-soft. */
+    /** Refresh when a session exists, the TTL elapsed, and no refresh is running. Fail-soft. With a snapshot to
+     * serve, the refresh runs in the background so library tabs do not wait for a full account walk. */
     suspend fun maybeRefresh() {
         if (sessionProvider() == null) return
+        if (!needsRefresh()) return
+        if (cachedState() != null) {
+            if (!refreshMutex.isLocked) refreshScope.launch { refreshIfStale() }
+            return
+        }
+        refreshIfStale()
+    }
+
+    private suspend fun refreshIfStale() {
         refreshMutex.withLock {
             if (!needsRefresh()) return@withLock
             runCatching { doRefresh() }
@@ -574,9 +591,7 @@ internal class PipedSavedLibrary(
      * offline use). When [minRows] asks beyond the cache, continues through the stored nextpage token. */
     suspend fun rowsFor(uuid: String, minRows: Int = 0, healDepth: Int = 0): CachedRows {
         val key = PLAYLIST_ROWS_PREFIX + uuid
-        val cached = store.get(key)?.let { raw ->
-            runCatching { json.decodeFromJsonElement<CachedRows>(raw) }.getOrNull()
-        }
+        val cached = store.getDecoded(key, CachedRows.serializer())
         // Non-null by construction so the extension loop below (which REBINDS
         // rows to recovery/heal results) never loses the smart cast.
         var rows: CachedRows = cached ?: run {
@@ -591,13 +606,15 @@ internal class PipedSavedLibrary(
         }
         // Re-verification ALSO opens for IN-SPAN windows on over-budget caches (Store.page() twin): shrunken
         // playlists leave ghost rows and account caches have no TTL arm — IN-SPAN reads run anchor + window verify.
-        if (!rows.complete && (rows.tracks.size < minRows || rows.tracks.size > REVERIFY_LIMIT)) {
+        // A token-less open cache still needs the anchor, which is its only live chain.
+        val recentlyVerified = !rows.nextpage.isNullOrBlank() && openCacheRecentlyVerified(key)
+        if (!rows.complete && (rows.tracks.size < minRows || (rows.tracks.size > REVERIFY_LIMIT && !recentlyVerified))) {
             // Recovery arms rebuild to the OLD span in one pass; the caller's minRows may still exceed it.
             // Re-enter when the rebuilt cache carries a LIVE chain (bounded; looping instances must not refetch forever).
             var recoveries = 0
             // The page-1 anchor + exact-span verify run ONCE per call (dead/odd rows advance the raw token
             // while the CONVERTED size stays flat; re-running every iteration multiplies the per-scroll cost).
-            var anchoredVerify: Boolean = false
+            var anchoredVerify: Boolean = recentlyVerified
             // IN-SPAN pass: an over-budget open cache whose window lies INSIDE the span fails the size gate,
             // but the anchor + WINDOW-capped verify must still run — else every scroll serves the stale span unverified.
             var inSpanPass = rows.tracks.size >= minRows
@@ -861,6 +878,7 @@ internal class PipedSavedLibrary(
                     verifyLiveToken = verifyToken
                     verifyLiveResume = rows.tracks.size
                 }
+                openCacheVerifiedAt[key] = epochMillis()
             }
             if (inSpanThisPass) {
                 // The requested window lies inside the cached span: the page-1 anchor + window-capped verify

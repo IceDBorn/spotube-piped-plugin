@@ -27,9 +27,9 @@ internal class RealMetadataTrackAPI(
         val paging = pagination.getOffsetOrDefault()
         val ids = mirror.allSavedTrackIds()
         val slice = ids.drop(paging.offset).take(paging.limit)
-        val items = slice.mapNotNull { id ->
+        val items = slice.mapConcurrently { id ->
             runCatching { store.cachedTrack(id) ?: getTrack(id) }.getOrNull()
-        }
+        }.filterNotNull()
         return PaginationResult(
             items = items,
             totalCount = ids.size,

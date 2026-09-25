@@ -77,9 +77,12 @@ internal class RealMetadataPlaylistAPI(
         // ("Spotube - Albums/Artists/Favorites") stay hidden.
         val created = library.storedPlaylists().map { it.toEntity() }
         val account = mirror.cachedState()?.playlists.orEmpty().map { it.toEntity() }
-        val saved = library.savedPlaylists().mapNotNull { id -> runCatching { getPlaylist(id) }.getOrNull() }
-        val all = (created + account + saved).distinctBy { it.id }
-        if (all.isEmpty() && mirror.allSavedTrackIds().isNotEmpty()) {
+        val known = (created + account).distinctBy { it.id }
+        val knownIds = known.map { it.id }.toHashSet()
+        // Bookmarks come last, so only the ones inside the requested window are fetched.
+        val bookmarkIds = library.savedPlaylists().filterNot { it in knownIds }.distinct()
+        val total = known.size + bookmarkIds.size
+        if (total == 0 && mirror.allSavedTrackIds().isNotEmpty()) {
             // The host only shows its "Liked Tracks" card when the playlist list is non-empty, so keep the tab
             // usable with a synthetic saved-tracks playlist instead of an empty state.
             val liked = runCatching { likedSongsPlaylist() }.getOrNull()
@@ -91,12 +94,21 @@ internal class RealMetadataPlaylistAPI(
                 )
             }
         }
-        val slice = all.drop(paging.offset).take(paging.limit)
+        val start = minOf(paging.offset, total)
+        val end = minOf(paging.offset + paging.limit, total)
+        val knownSlice = known.drop(start).take(paging.limit)
+        val bookmarkSlice = bookmarkIds.subList(
+            (start - known.size).coerceIn(0, bookmarkIds.size),
+            (end - known.size).coerceIn(0, bookmarkIds.size),
+        )
+        val fetched = bookmarkSlice.mapConcurrently { id -> runCatching { getPlaylist(id) }.getOrNull() }.filterNotNull()
+        val slice = knownSlice + fetched
         return PaginationResult(
             items = slice,
-            totalCount = all.size,
-            nextPagination = if (paging.offset + slice.size < all.size) {
-                PaginationStrategy.Offset(paging.offset + slice.size, paging.limit)
+            totalCount = total,
+            // Advance by the window, not the result: a failed bookmark fetch must not stop paging.
+            nextPagination = if (end < total) {
+                PaginationStrategy.Offset(end, paging.limit)
             } else {
                 null
             },
@@ -122,7 +134,7 @@ internal class RealMetadataPlaylistAPI(
         val slice = ids.drop(paging.offset).take(paging.limit)
         // Same cachedTrack -> cachedStreams -> client.streams chain as resolveLocalTrack, so cached streams
         // (AlbumLookup / artistChannelOf writes) are served offline instead of dropped rows.
-        val items = slice.mapNotNull { resolveLocalTrack(it) }
+        val items = slice.mapConcurrently { resolveLocalTrack(it) }.filterNotNull()
         // ids come from the authoritative LOCAL saved set (exact count): page by the fixed limit so a dead-id run
         // never truncates the pager at one window and hides the valid tail. The slice guard belongs to account lists.
         return PaginationResult(
@@ -242,7 +254,7 @@ internal class RealMetadataPlaylistAPI(
         paging: PaginationStrategy.Offset,
     ): PaginationResult<MetadataTrack> {
         val slice = record.trackIds.drop(paging.offset).take(paging.limit)
-        val items = slice.map { id -> resolveLocalTrack(id) }
+        val items = slice.mapConcurrently { id -> resolveLocalTrack(id) }
         return PaginationResult(
             items = items.filterNotNull(),
             totalCount = record.trackIds.size,

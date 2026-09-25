@@ -107,7 +107,7 @@ internal class RealMetadataAlbumAPI(
         val paging = pagination.getOffsetOrDefault()
         val ids = mirror.allSavedAlbumIds()
         val slice = ids.drop(paging.offset).take(paging.limit)
-        val items = slice.mapNotNull { id -> runCatching { getAlbum(id) }.getOrNull() }
+        val items = slice.mapConcurrently { id -> runCatching { getAlbum(id) }.getOrNull() }.filterNotNull()
         return PaginationResult(
             items = items,
             totalCount = ids.size,
