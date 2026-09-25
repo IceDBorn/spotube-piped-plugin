@@ -21,6 +21,7 @@ import dev.icedborn.spotube_plugin_piped_metadata.RealMetadataSearchAPI
 import dev.icedborn.spotube_plugin_piped_metadata.RealMetadataTrackAPI
 import dev.icedborn.spotube_plugin_piped_metadata.RealMetadataUserAPI
 import dev.icedborn.spotube_plugin_piped_metadata.RegionSetting
+import dev.icedborn.spotube_plugin_piped_metadata.UpdateChannelSetting
 import dev.krtirtho.plugin_interfaces.core.runPluginInitialized
 import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI
 import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI_SERVICE_NAME
@@ -83,6 +84,7 @@ fun main() {
         // Bound by every host version; older hosts without it fall back to the Global charts.
         val systemInfo = runCatching { zipline.take<SystemInformationAPI>(SystemInformationAPI_SERVICE_NAME) }.getOrNull()
         val region = RegionSetting(store, systemInfo)
+        val updateChannel = UpdateChannelSetting(store)
         val history = PlayHistory(store)
         val core = RealCoreAPI(
             httpClient = httpClient,
@@ -91,6 +93,7 @@ fun main() {
             session = session,
             instanceSource = instanceSource,
             region = region,
+            channel = updateChannel,
             onLogin = { mirror.refreshCache() },
         )
         val trackApi = RealMetadataTrackAPI(client, store, library, mirror)

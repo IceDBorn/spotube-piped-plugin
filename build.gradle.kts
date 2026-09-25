@@ -13,7 +13,8 @@ plugins {
 
 spotubePlugin {
     name = "Piped"
-    version = "0.0.1"
+    // Nightly CI passes -PpluginVersion=<x.y.(z+1)>-nightly.<run>; a plain build uses the last stable.
+    version = providers.gradleProperty("pluginVersion").getOrElse("0.0.1")
     apiVersion = "0.0.1"
     description = "YouTube Music audio + metadata (tracks, albums, artists, playlists, search) via a Piped instance you choose in the plugin settings (no default instance). Saved items sync to the account when online and stay cached on this device for offline use"
     author = "IceDBorn"

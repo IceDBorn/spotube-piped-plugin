@@ -48,8 +48,9 @@ class RealCoreAPI(
     private val session: AccountSession,
     private val instanceSource: InstanceSource,
     private val region: RegionSetting,
+    private val channel: UpdateChannelSetting? = null,
     private val onLogin: suspend () -> Unit = {},
-    private val updateChecker: UpdateChecker = UpdateChecker(httpClient),
+    private val updateChecker: UpdateChecker = UpdateChecker(httpClient, channel),
 ) : CoreAPI {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -174,7 +175,11 @@ class RealCoreAPI(
         val subscriber = scope.launch {
             webView.postMessagesFlow().onEach { messages.trySend(it) }.launchIn(this)
             val lightTheme = runCatching { storage.getString(FORM_THEME_KEY) }.getOrNull() == "light"
-            val html = settingsFormHtml(instance, playback, username, lightTheme, region.stored(), region.detected())
+            val html = settingsFormHtml(
+                instance, playback, username, lightTheme,
+                region.stored(), region.detected(),
+                channel?.stored()?.name ?: UpdateChannel.AUTO.name,
+            )
             webView.navigateToHTML(html)
         }
         try {
@@ -185,6 +190,18 @@ class RealCoreAPI(
                 val action = fields["action"]?.jsonPrimitive?.contentOrNull
                 if (action == "region") {
                     runCatching { region.set(fields["region"]?.jsonPrimitive?.contentOrNull.orEmpty()) }
+                    continue
+                }
+                if (action == "channel") {
+                    runCatching {
+                        channel?.set(
+                            UpdateChannel.entries.firstOrNull {
+                                it.name == fields["channel"]?.jsonPrimitive?.contentOrNull
+                            } ?: UpdateChannel.AUTO
+                        )
+                    }
+                    // The cached result belongs to the old channel, so the next check has to ask again.
+                    updateChecker.clearCache()
                     continue
                 }
                 if (action == "theme") {

@@ -9,6 +9,7 @@ import kotlinx.coroutines.delay
 class FakeHttp : HttpClientAPI {
     val requests = mutableListOf<String>()
     private val routes = mutableListOf<Pair<(String) -> Boolean, HttpResponse>>()
+    private val throwing = mutableListOf<Pair<(String) -> Boolean, Throwable>>()
 
     /** Simulated latency. Without it a request completes before the next coroutine starts, so tests
      * that mean to overlap two in-flight calls would really be testing the cache. Costs no wall time in runTest. */
@@ -21,6 +22,13 @@ class FakeHttp : HttpClientAPI {
     /** Matches anywhere in the URL, so a path still hits when the request carries a query string. */
     fun onPath(path: String, status: Int = 200, body: String) = on({ it.contains(path) }, status, body)
 
+    /** A route that throws instead of answering, the way a host HTTP client fails on a timeout. */
+    fun onThrow(match: (String) -> Boolean, error: Throwable) {
+        throwing += match to error
+    }
+
+    fun onPathThrow(path: String, error: Throwable) = onThrow({ it.contains(path) }, error)
+
     fun countMatching(fragment: String): Int = requests.count { it.contains(fragment) }
 
     override suspend fun request(
@@ -31,6 +39,7 @@ class FakeHttp : HttpClientAPI {
     ): HttpResponse {
         requests += url
         if (latencyMs > 0) delay(latencyMs)
+        throwing.firstOrNull { it.first(url) }?.let { throw it.second }
         return routes.firstOrNull { it.first(url) }?.second ?: HttpResponse(404, emptyMap(), "")
     }
 }

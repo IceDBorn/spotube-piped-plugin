@@ -5,6 +5,11 @@ Google account, and a Piped account is optional.
 
 ## Install
 
+Stable builds are on the [Releases page](https://github.com/IceDBorn/spotube-piped-plugin/releases). The `nightly`
+prerelease there is rebuilt from every push to `main`.
+
+To build from source:
+
 1. Build the plugin (see [Build](#build)).
 2. In Spotube, open Settings -> Manage plugins -> Install a Plugin -> Install from file or URL. If you built with
    `--serve`, paste one of the URLs it prints.
@@ -20,6 +25,13 @@ The **Instance** tab:
   or your own.
 - **Playback instance** (optional): resolve audio from a different instance than the one serving metadata.
 - **Charts region**: *Auto* guesses the country from the system time zone. Countries without charts use Global.
+- **Update channel**: which GitHub release the update check offers. *Auto* follows the installed build, so a
+  nightly install stays on nightlies and a stable install stays on stable releases. *Stable* only ever looks at the
+  latest release, *Nightly* at both and offers the newer of the two.
+
+After switching from Nightly to Stable, no update is offered until a stable release is newer than the installed
+nightly. To go back sooner, reinstall a stable build from the
+[Releases page](https://github.com/IceDBorn/spotube-piped-plugin/releases).
 
 The **Sign in** tab is optional. Sign in to, or register on, the instance. Saved tracks, albums and artists then sync
 to the "Spotube - Favorites", "Spotube - Albums" and "Spotube - Artists" playlists on that account, and a copy stays
@@ -54,6 +66,13 @@ nix run . -- --serve [port]  # same, then serves only that file over HTTP (defau
 ```
 
 Without nix, the bundle is written to `build/distributions/plugin-production.smplug`.
+
+The version comes from `pluginVersion` in `gradle.properties`. That is the last stable release; to build a
+nightly, pass the next patch with a prerelease suffix, which orders above that release and below the next one:
+
+```sh
+./gradlew -PpluginVersion=0.0.2-nightly.7 :generatePluginJson --rerun-tasks :packageProductionPlugin
+```
 
 ## Test
 
