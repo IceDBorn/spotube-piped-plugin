@@ -187,18 +187,19 @@ internal class RealMetadataArtistAPI(
         val query = cleanArtistName(channel.name)
         if (query.isBlank()) return emptyPagination()
         return runCatching {
-            val page = client.search(query, PipedSearchFilter.MUSIC_ALBUMS, pagination.continuationToken())
+            val token = pagination.continuationToken()
+            val page = client.search(query, PipedSearchFilter.MUSIC_ALBUMS, token)
             // EVERY page is filtered by the artist: YT Music search is fuzzy, so continuation pages
             // (and title-matching rows) mix in albums by other artists.
-            val items = page?.items.orEmpty()
+            val matched = page?.items.orEmpty()
                 .filter { it.type == "playlist" }
                 .filter { uploadedByArtist(it, id, query) }
-                .distinctBy { playlistIdOf(it.url) }
                 .mapNotNull { it.toAlbumDetailed() }
+            val items = distinctAcrossPages("artist-albums:$id", token, matched) { it.id }
             PaginationResult(
                 items = items,
                 totalCount = items.size,
-                nextPagination = nextContinuation(page?.nextpage),
+                nextPagination = nextContinuation(page?.nextpage, token),
             )
         }.getOrDefault(emptyPagination())
     }
@@ -213,16 +214,17 @@ internal class RealMetadataArtistAPI(
         val query = cleanArtistName(channel.name)
         if (query.isBlank()) return emptyPagination()
         return runCatching {
-            val page = client.search(query, PipedSearchFilter.PLAYLISTS, pagination.continuationToken())
+            val token = pagination.continuationToken()
+            val page = client.search(query, PipedSearchFilter.PLAYLISTS, token)
             val (own, others) = page?.items.orEmpty()
                 .filter { it.type == "playlist" }
-                .distinctBy { playlistIdOf(it.url) }
                 .partition { uploadedByArtist(it, id, query) }
-            val items = (own + others.filter { namesArtist(it, query) }).mapNotNull { it.toPlaylist() }
+            val matched = (own + others.filter { namesArtist(it, query) }).mapNotNull { it.toPlaylist() }
+            val items = distinctAcrossPages("artist-playlists:$id", token, matched) { it.id }
             PaginationResult(
                 items = items,
                 totalCount = items.size,
-                nextPagination = nextContinuation(page?.nextpage),
+                nextPagination = nextContinuation(page?.nextpage, token),
             )
         }.getOrDefault(emptyPagination())
     }

@@ -27,7 +27,7 @@ internal class RealMetadataPlaylistAPI(
         val page = if (cached != null && (cached.relatedStreams.isNotEmpty() || !cached.nextpage.isNullOrBlank())) cached else {
             // playlist() nulls BLANK bodies (throttles); a decodable page — even EMPTY — is authoritative: cache it.
             // Re-fetch failures degrade to the cached page (real header) — the unwrapped caller must not hard-fail.
-            val fetched = client.playlist(id)
+            val fetched = orNull { client.playlist(id) }
             if (fetched != null) {
                 store.cacheAlbumPlaylist(id, fetched)
                 fetched
@@ -283,14 +283,14 @@ internal class RealMetadataPlaylistAPI(
         account: CachedAccountPlaylist,
         paging: PaginationStrategy.Offset,
     ): PaginationResult<MetadataTrack> {
-        val rows = mirror.rowsFor(account.id, paging.offset + paging.limit)
+        val rows = withRowsLock(PLAYLIST_ROWS_PREFIX + account.id) { mirror.rowsFor(account.id, paging.offset + paging.limit) }
         val total = if (account.trackCount > 0) account.trackCount else rows.tracks.size
         val slice = rows.tracks.drop(paging.offset).take(paging.limit)
         // Keep paging while the row cache is OPEN: the listing trackCount lags the live walk (TTL refresh), and
         // truncating at a stale count hides web-grown rows until the next refresh (Store.page() twin, same escape).
         val more = !rows.complete || paging.offset + slice.size < total
         return PaginationResult(
-            items = slice,
+            items = distinctWindow(rows.tracks, paging.offset, slice) { it.id },
             totalCount = total,
             nextPagination = if (more && slice.isNotEmpty()) {
                 PaginationStrategy.Offset(paging.offset + slice.size, paging.limit)

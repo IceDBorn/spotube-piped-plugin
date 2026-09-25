@@ -4,6 +4,9 @@ import dev.krtirtho.plugin_interfaces.host_apis.PersistedStorageAPI
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationResult
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
+import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
@@ -276,6 +279,20 @@ class LocalLibrary(private val store: EntityStore) {
     }
 }
 
+private val rowsLocks = HashMap<String, Mutex>()
+
+internal suspend fun <T> withRowsLock(key: String, block: suspend () -> T): T =
+    rowsLocks.getOrPut(key) { Mutex() }.withLock { block() }
+
+/** [block]'s result, or null when it throws; cancellation still propagates. */
+internal suspend fun <T> orNull(block: suspend () -> T?): T? = try {
+    block()
+} catch (e: CancellationException) {
+    throw e
+} catch (e: Exception) {
+    null
+}
+
 // Last page-1 anchor + verify per rows key. Shared by PlaylistRows (created per call) and rowsFor.
 internal val openCacheVerifiedAt = HashMap<String, Long>()
 
@@ -291,6 +308,12 @@ class PlaylistRows(
     private val store: EntityStore,
 ) {
 
+    // A thrown fetch (HTTP 429/5xx, bad body) counts as a failed fetch, which every caller below already handles.
+    private suspend fun fetchFirstPage(id: String): PipedPlaylistPage? = orNull { client.playlist(id) }
+
+    private suspend fun fetchNextPage(id: String, token: String): PipedPlaylistPage? =
+        orNull { client.playlistNextPage(id, token) }
+
     suspend fun page(
         id: String,
         isAlbum: Boolean,
@@ -299,6 +322,18 @@ class PlaylistRows(
         knownTotal: Int,
     ): PaginationResult<MetadataTrack> {
         val key = (if (isAlbum) "album.rows:" else PLAYLIST_ROWS_PREFIX) + id
+        // Fast scrolling fires overlapping page calls; one at a time per list, so they share the extended cache.
+        return withRowsLock(key) { pageLocked(key, id, isAlbum, album, paging, knownTotal) }
+    }
+
+    private suspend fun pageLocked(
+        key: String,
+        id: String,
+        isAlbum: Boolean,
+        album: dev.krtirtho.plugin_interfaces.plugin_apis.metadata.album.MetadataAlbum.Detailed?,
+        paging: PaginationStrategy.Offset,
+        knownTotal: Int,
+    ): PaginationResult<MetadataTrack> {
         val stored = store.getDecoded(key, CachedRows.serializer())
         var rows = stored ?: seedFromAlbumCache(id, album)
         // A seed from a page 1 fetched moments ago is already anchored: skip the re-fetch below.
@@ -321,7 +356,7 @@ class PlaylistRows(
         if (rows.complete && epochMillis() - rows.lastVerifiedAt > COMPLETE_CACHE_VERIFY_TTL_MS) {
             // Degrade-not-throw like the blank-fallback doctrine: PipedClient GETs throw on non-2xx (429/5xx
             // throttle); a thrown re-verify must behave like a failed refetch (keep old cache), never crash the screen.
-            val vpage = runCatching { client.playlist(id) }.getOrNull()
+            val vpage = fetchFirstPage(id)
             if (vpage != null) {
                 store.cacheAlbumPlaylist(id, vpage)
                 val vv = mutableListOf<MetadataTrack>()
@@ -338,7 +373,7 @@ class PlaylistRows(
                 while (vv.size < vCap) {
                     val vt = vtoken ?: break
                     if (vt.isBlank()) break
-                    val vp = runCatching { client.playlistNextPage(id, vt) }.getOrNull() ?: break
+                    val vp = fetchNextPage(id, vt) ?: break
                     if (vp.relatedStreams.isEmpty()) break
                     vrows = vp.relatedStreams.size
                     vp.relatedStreams.forEach { item ->
@@ -384,7 +419,7 @@ class PlaylistRows(
         ) {
             // First-page generation anchor (mirrors rowsFor): an out-of-band edit before the cursor shifts every
             // continuation silently; a page-1 change invalidates the whole cache — re-seed from a FRESH fetch.
-            val anchor = runCatching { client.playlist(id) }.getOrNull()
+            val anchor = fetchFirstPage(id)
             val anchorIds = anchor?.relatedStreams.orEmpty().mapNotNull { videoIdOf(it.url) }.filter { it.isNotEmpty() }
             if (anchor != null && anchor.relatedStreams.isEmpty() && anchor.nextpage == null) {
                 // Authoritative empty page 1: replace the stale span with an OPEN empty cache (complete=false,
@@ -436,7 +471,7 @@ class PlaylistRows(
                 if (vt.isBlank()) break
                 // A null continuation (blank/{} throttle) breaks the verify chain without completing it — the
                 // same keep-open stance as an empty page below.
-                val vpage = client.playlistNextPage(id, vt) ?: break
+                val vpage = fetchNextPage(id, vt) ?: break
                 if (vpage.relatedStreams.isEmpty()) break
                 lastVerifyRows = vpage.relatedStreams.size
                 lastVerifyConverted = 0
@@ -520,7 +555,7 @@ class PlaylistRows(
             }
             // A null continuation is a FAILED fetch, NOT a proven end; a dead stored non-blank token must heal
             // onto this call's LIVE chain like the decoded-empty arm — breaking here stalls extension forever.
-            val page = client.playlistNextPage(id, token) ?: run {
+            val page = fetchNextPage(id, token) ?: run {
             val live = liveToken
             if (live != null && live != token && rows.tracks.size >= liveResume) {
                 if (liveRawResume == null) liveRawResume = anchorLiveRaw
@@ -554,7 +589,7 @@ class PlaylistRows(
             if (mismatch) {
                 // The token chain is stale (out-of-band mutation): re-seed from a FRESH page-1 fetch — reusing
                 // the cached page would continue the stale token and re-append old-generation rows.
-                val fresh = client.playlist(id) ?: break
+                val fresh = fetchFirstPage(id) ?: break
                 // EMPTY fresh page-1 + blank token = the authoritative emptied shape: replace the stale span
                 // with an OPEN empty cache (re-anchors next call). DECODED BLANK = throttle, never EOF — keep.
                 if (fresh.relatedStreams.isEmpty() && fresh.nextpage == null) {
@@ -633,7 +668,8 @@ class PlaylistRows(
         val total = if (knownTotal > 0) knownTotal else tracks.size
         val more = !rows.complete || paging.offset + slice.size < total
         return PaginationResult(
-            items = slice,
+            // Pagination math below stays on the raw slice; only the served items drop repeats.
+            items = distinctWindow(tracks, paging.offset, slice) { it.id },
             totalCount = total,
             // Only offer another page when this one came back full.
             nextPagination = if (more && slice.size >= paging.limit) {
@@ -652,7 +688,7 @@ class PlaylistRows(
         val cached = store.cachedAlbumPlaylist(id) ?: run {
             // Degrade-not-throw like the blank fallback: GETs throw on non-2xx and a first visit has no cached
             // rows — an unwrapped throw would hard-fail the screens. Treat it exactly like a null fetch.
-            val page = runCatching { client.playlist(id) }.getOrNull()
+            val page = fetchFirstPage(id)
                 ?: return CachedRows(emptyList(), null, false, 0)
             // Empty page-1 + blank token = throttled shape, NOT a proven EOF: neither cache raw nor complete —
             // the open empty cache re-anchors and heals next visit instead of freezing an empty album forever.

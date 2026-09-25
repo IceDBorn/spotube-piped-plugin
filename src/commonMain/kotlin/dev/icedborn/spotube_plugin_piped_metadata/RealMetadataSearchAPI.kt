@@ -34,9 +34,11 @@ class RealMetadataSearchAPI(
                 val albums = async { searchAlbums(query, null).items }
                 val playlists = async { searchPlaylists(query, null).items }
                 val all = listOf(songs, videos, artists, albums, playlists).awaitAll()
+                val songIds = all[0].mapTo(HashSet()) { (it as MetadataSearchResult.Track).data.id }
                 buildList {
                     addAll(all[0]) // songs
-                    addAll(all[1]) // plain YouTube videos
+                    // Plain YouTube videos, minus tracks already listed as songs (same id would crash the host list).
+                    addAll(all[1].filterNot { (it as MetadataSearchResult.Track).data.id in songIds })
                     addAll(all[2])
                     addAll(all[3])
                     addAll(all[4])
@@ -49,14 +51,16 @@ class RealMetadataSearchAPI(
     suspend fun searchVideos(query: String, pagination: PaginationStrategy? = null): PaginationResult<MetadataSearchResult.Track> {
         if (query.isBlank()) return emptyPagination()
         return runCatching {
-            val page = client.search(query, PipedSearchFilter.VIDEOS, pagination.continuationToken())
-            val items = page?.items.orEmpty()
+            val token = pagination.continuationToken()
+            val page = client.search(query, PipedSearchFilter.VIDEOS, token)
+            val found = page?.items.orEmpty()
                 .filter { it.type == "stream" || it.type == "video" }
                 .mapNotNull { item -> item.toTrack()?.also { store.rememberTrack(it) } }
+            val items = distinctAcrossPages("search-videos:$query", token, found) { it.id }
             PaginationResult(
                 items = items.map { MetadataSearchResult.Track(data = it) },
                 totalCount = items.size,
-                nextPagination = nextContinuation(page?.nextpage),
+                nextPagination = nextContinuation(page?.nextpage, token),
             )
         }.getOrDefault(emptyPagination())
     }
@@ -67,14 +71,16 @@ class RealMetadataSearchAPI(
     ): PaginationResult<MetadataSearchResult.Track> {
         if (query.isBlank()) return emptyPagination()
         return runCatching {
-            val page = client.search(query, PipedSearchFilter.MUSIC_SONGS, pagination.continuationToken())
-            val items = page?.items.orEmpty()
+            val token = pagination.continuationToken()
+            val page = client.search(query, PipedSearchFilter.MUSIC_SONGS, token)
+            val found = page?.items.orEmpty()
                 .filter { it.type == "stream" || it.type == "video" }
                 .mapNotNull { item -> item.toTrack()?.also { store.rememberTrack(it) } }
+            val items = distinctAcrossPages("search-songs:$query", token, found) { it.id }
             PaginationResult(
                 items = items.map { MetadataSearchResult.Track(data = it) },
                 totalCount = items.size,
-                nextPagination = nextContinuation(page?.nextpage),
+                nextPagination = nextContinuation(page?.nextpage, token),
             )
         }.getOrDefault(emptyPagination())
     }
@@ -85,12 +91,14 @@ class RealMetadataSearchAPI(
     ): PaginationResult<MetadataSearchResult.Artist> {
         if (query.isBlank()) return emptyPagination()
         return runCatching {
-            val page = client.search(query, PipedSearchFilter.MUSIC_ARTISTS, pagination.continuationToken())
-            val items = page?.items.orEmpty().mapNotNull { it.toArtist() }
+            val token = pagination.continuationToken()
+            val page = client.search(query, PipedSearchFilter.MUSIC_ARTISTS, token)
+            val found = page?.items.orEmpty().mapNotNull { it.toArtist() }
+            val items = distinctAcrossPages("search-artists:$query", token, found) { it.id }
             PaginationResult(
                 items = items.map { MetadataSearchResult.Artist(data = it) },
                 totalCount = items.size,
-                nextPagination = nextContinuation(page?.nextpage),
+                nextPagination = nextContinuation(page?.nextpage, token),
             )
         }.getOrDefault(emptyPagination())
     }
@@ -101,12 +109,14 @@ class RealMetadataSearchAPI(
     ): PaginationResult<MetadataSearchResult.Album> {
         if (query.isBlank()) return emptyPagination()
         return runCatching {
-            val page = client.search(query, PipedSearchFilter.MUSIC_ALBUMS, pagination.continuationToken())
-            val items = page?.items.orEmpty().mapNotNull { it.toAlbumBasic() }
+            val token = pagination.continuationToken()
+            val page = client.search(query, PipedSearchFilter.MUSIC_ALBUMS, token)
+            val found = page?.items.orEmpty().mapNotNull { it.toAlbumBasic() }
+            val items = distinctAcrossPages("search-albums:$query", token, found) { it.id }
             PaginationResult(
                 items = items.map { MetadataSearchResult.Album(data = it) },
                 totalCount = items.size,
-                nextPagination = nextContinuation(page?.nextpage),
+                nextPagination = nextContinuation(page?.nextpage, token),
             )
         }.getOrDefault(emptyPagination())
     }
@@ -117,12 +127,14 @@ class RealMetadataSearchAPI(
     ): PaginationResult<MetadataSearchResult.Playlist> {
         if (query.isBlank()) return emptyPagination()
         return runCatching {
-            val page = client.search(query, PipedSearchFilter.MUSIC_PLAYLISTS, pagination.continuationToken())
-            val items = page?.items.orEmpty().mapNotNull { it.toPlaylist() }
+            val token = pagination.continuationToken()
+            val page = client.search(query, PipedSearchFilter.MUSIC_PLAYLISTS, token)
+            val found = page?.items.orEmpty().mapNotNull { it.toPlaylist() }
+            val items = distinctAcrossPages("search-playlists:$query", token, found) { it.id }
             PaginationResult(
                 items = items.map { MetadataSearchResult.Playlist(data = it) },
                 totalCount = items.size,
-                nextPagination = nextContinuation(page?.nextpage),
+                nextPagination = nextContinuation(page?.nextpage, token),
             )
         }.getOrDefault(emptyPagination())
     }

@@ -25,9 +25,27 @@ internal fun PaginationStrategy?.continuationToken(): String? = when (this) {
     else -> null
 }
 
-internal fun nextContinuation(nextpage: String?): PaginationStrategy? =
-    nextpage?.takeIf { it.isNotBlank() }?.let { PaginationStrategy.Continuation(it) }
+/** Null when the API hands back the cursor it was given, which would make the host request the same page forever. */
+internal fun nextContinuation(nextpage: String?, current: String? = null): PaginationStrategy? =
+    nextpage?.takeIf { it.isNotBlank() && it != current }?.let { PaginationStrategy.Continuation(it) }
 
+private const val SEEN_LISTS_LIMIT = 50
+private val seenPerList = LinkedHashMap<String, HashSet<String>>()
+
+/** Drops items already served earlier in the same continuation list. YouTube repeats rows across pages, and the
+ * host keys list items by id, so a repeat crashes it. The first page ([token] null) starts the list over. */
+internal fun <T> distinctAcrossPages(listKey: String, token: String?, items: List<T>, id: (T) -> String): List<T> {
+    val seen = if (token == null) HashSet() else seenPerList.remove(listKey) ?: HashSet()
+    seenPerList[listKey] = seen
+    if (seenPerList.size > SEEN_LISTS_LIMIT) seenPerList.remove(seenPerList.keys.first())
+    return items.filter { seen.add(id(it)) }
+}
+
+/** The [offset]-based window of [rows] minus ids already shown earlier in the list, for the same host id-key rule. */
+internal fun <T> distinctWindow(rows: List<T>, offset: Int, window: List<T>, id: (T) -> String): List<T> {
+    val seen = rows.take(offset).mapTo(HashSet()) { id(it) }
+    return window.filter { seen.add(id(it)) }
+}
 
 internal fun <T> emptyPagination(): PaginationResult<T> =
     PaginationResult(emptyList(), 0, null)

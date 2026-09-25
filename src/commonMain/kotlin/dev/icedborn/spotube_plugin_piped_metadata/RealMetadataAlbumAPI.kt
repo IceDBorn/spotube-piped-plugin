@@ -21,7 +21,7 @@ internal class RealMetadataAlbumAPI(
         val page = if (cached != null && (cached.relatedStreams.isNotEmpty() || !cached.nextpage.isNullOrBlank())) cached else {
             // playlist() nulls BLANK bodies (throttles); a decodable page — even EMPTY — is authoritative: cache it.
             // Re-fetch failures degrade to the cached page (real header) — the unwrapped caller must not hard-fail.
-            val fetched = client.playlist(realId)
+            val fetched = orNull { client.playlist(realId) }
             if (fetched != null) {
                 store.cacheAlbumPlaylist(realId, fetched)
                 fetched

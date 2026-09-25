@@ -2118,22 +2118,27 @@ internal class PipedSavedLibrary(
     }
 
     private suspend fun sessionedGet(instance: String, path: String): String? {
-        val response = httpClient.request(
-            method = HttpMethod.Get,
-            url = instance.trimEnd('/') + path,
-            requestHeaders = mapOf("Accept" to "application/json"),
-            body = null,
-        )
+        // A transport failure (timeout, DNS) is a failed fetch, like a non-2xx status.
+        val response = orNull {
+            httpClient.request(
+                method = HttpMethod.Get,
+                url = instance.trimEnd('/') + path,
+                requestHeaders = mapOf("Accept" to "application/json"),
+                body = null,
+            )
+        } ?: return null
         return if (response.statusCode in 200..299) response.body else null
     }
 
     private suspend fun userGet(account: PipedAccount, path: String): String? {
-        val response = httpClient.request(
-            method = HttpMethod.Get,
-            url = account.instance.trimEnd('/') + path,
-            requestHeaders = mapOf("Accept" to "application/json", "Authorization" to account.token),
-            body = null,
-        )
+        val response = orNull {
+            httpClient.request(
+                method = HttpMethod.Get,
+                url = account.instance.trimEnd('/') + path,
+                requestHeaders = mapOf("Accept" to "application/json", "Authorization" to account.token),
+                body = null,
+            )
+        } ?: return null
         return if (response.statusCode in 200..299) response.body else null
     }
 
