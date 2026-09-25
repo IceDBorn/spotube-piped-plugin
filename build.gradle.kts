@@ -33,7 +33,11 @@ kotlin {
     applyDefaultHierarchyTemplate()
 
     js {
-        browser()
+        browser {
+            testTask { enabled = false }
+        }
+        // Node, not Karma: no Chrome needed, and it runs under nix.
+        nodejs()
         binaries.executable()
     }
 
@@ -48,7 +52,7 @@ kotlin {
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
         }
-        jvmTest.dependencies {
+        commonTest.dependencies {
             implementation(kotlin("test"))
             implementation(libs.kotlinx.coroutines.test)
         }

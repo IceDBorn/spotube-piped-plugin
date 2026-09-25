@@ -58,14 +58,16 @@ Without nix, the bundle is written to `build/distributions/plugin-production.smp
 ## Test
 
 ```sh
-./gradlew :jvmTest
+./gradlew :jvmTest :jsNodeTest
 ```
 
-The tests run on a JVM target that exists only for them. The shipped plugin is the JS bundle. They use fake host
-HTTP and storage APIs with canned Piped responses from `src/jvmTest/resources/`, so they need no network.
+The offline tests run on both the JVM target and the JS target. The JVM target exists only for the tests; the
+shipped plugin is the JS bundle. The tests use fake host HTTP and storage APIs with canned Piped responses
+inlined in `src/commonTest/`, so they need no network. Running them on JS catches the differences in regex
+flavour, `Long` arithmetic and string handling that the JVM does not show.
 
-`LiveSmokeTest` checks search, album playlists and channels against a real instance. It is skipped unless
-`PIPED_INSTANCE` is set:
+`LiveSmokeTest` checks search, album playlists and channels against a real instance. It is JVM-only, because it
+uses `java.net` and JUnit assumptions. It is skipped unless `PIPED_INSTANCE` is set:
 
 ```sh
 PIPED_INSTANCE=https://your.instance ./gradlew :jvmTest --tests '*LiveSmokeTest*'

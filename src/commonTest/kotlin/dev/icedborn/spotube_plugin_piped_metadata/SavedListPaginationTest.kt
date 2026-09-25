@@ -13,6 +13,9 @@ import kotlinx.coroutines.test.runTest
 /** Saved lists page by the local id set, so every id is covered exactly once across the pages. */
 class SavedListPaginationTest {
 
+    /** The id shape the fixtures use: "vid" + a 7-digit index + "0". */
+    private fun videoId(index: Int): String = "vid" + index.toString().padStart(7, '0') + "0"
+
     private class Harness(val http: FakeHttp, val storage: FakeStorage) {
         val store = EntityStore(storage)
         val library = LocalLibrary(store)
@@ -32,7 +35,7 @@ class SavedListPaginationTest {
     @Test
     fun `saved track pages cover every id exactly once and end with a null next page`() = runTest {
         val harness = Harness(FakeHttp(), FakeStorage())
-        val ids = (0 until 7).map { "vid%07d0".format(it) }
+        val ids = (0 until 7).map { videoId(it) }
         harness.library.saveTracks(ids)
         harness.http.on({ it.contains("/streams/") }, body = streamsBody("Track"))
 
@@ -92,7 +95,7 @@ class SavedListPaginationTest {
     @Test
     fun `the default page size is fifty`() = runTest {
         val harness = Harness(FakeHttp(), FakeStorage())
-        harness.library.saveTracks((0 until 60).map { "vid%07d0".format(it) })
+        harness.library.saveTracks((0 until 60).map { videoId(it) })
         harness.http.on({ it.contains("/streams/") }, body = streamsBody("Track"))
         val page = harness.tracks.savedTracks(null)
         assertEquals(50, page.items.size)
