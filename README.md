@@ -19,6 +19,7 @@ Needs a JDK 21.
 
 ```sh
 nix run . # writes spotube-plugin-piped.smplug to the current directory
+nix run . -- --serve [port] # same, then serves only that file over HTTP (default port 8000)
 
 # or without nix:
 ./gradlew :generatePluginJson --rerun-tasks :packageProductionPlugin
@@ -29,3 +30,4 @@ The bundle lands in `build/distributions/plugin-production.smplug`.
 ## Install
 
 Settings -> Manage plugins -> Install a Plugin -> Install from file or URL.
+With `--serve`, paste one of the printed URLs.
