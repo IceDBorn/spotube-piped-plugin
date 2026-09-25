@@ -105,5 +105,8 @@ passwords.
   app. To update, install from one of these URLs again:
   - stable: `https://github.com/IceDBorn/spotube-piped-plugin/releases/latest/download/spotube-plugin-piped.smplug`
   - nightly: `https://github.com/IceDBorn/spotube-piped-plugin/releases/download/nightly/spotube-plugin-piped.smplug`
+- Spotube Nightly on Android shows no play or add-to-queue buttons on Home sections made of tracks, such as
+  "Recently played" and "Because you listened to", so those tracks cannot be played from Home there. Desktop shows
+  the buttons.
 - Piped has no related-artists endpoint. Artist pages show no related artists, and the Home "Fans also like" section
   is built from the artists in radio mixes.
