@@ -117,17 +117,3 @@ class PipedClient(
     }
 }
 
-private const val HEX = "0123456789ABCDEF"
-
-internal fun String.percentEncoded(): String = buildString {
-    for (c in this@percentEncoded) {
-        if (c.isLetterOrDigit() || c in "-_.~") {
-            append(c)
-        } else {
-            val bytes = c.toString().encodeToByteArray()
-            for (b in bytes) {
-                append('%').append(HEX[(b.toInt() ushr 4) and 0xF]).append(HEX[b.toInt() and 0xF])
-            }
-        }
-    }
-}

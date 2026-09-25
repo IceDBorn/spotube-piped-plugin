@@ -1,5 +1,6 @@
 package dev.icedborn.spotube_plugin_piped
 
+import dev.icedborn.spotube_plugin_piped_metadata.percentEncoded
 import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI
 import dev.krtirtho.plugin_interfaces.host_apis.HttpMethod
 import kotlinx.serialization.json.Json
@@ -93,17 +94,3 @@ class PipedClient(
     }
 }
 
-private const val HEX = "0123456789ABCDEF"
-
-private fun String.percentEncoded(): String = buildString {
-    for (c in this@percentEncoded) {
-        if (c.isLetterOrDigit() || c in "-_.~") {
-            append(c)
-        } else {
-            val bytes = c.toString().encodeToByteArray()
-            for (b in bytes) {
-                append('%').append(HEX[(b.toInt() ushr 4) and 0xF]).append(HEX[b.toInt() and 0xF])
-            }
-        }
-    }
-}
