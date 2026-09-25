@@ -49,6 +49,7 @@ class RealCoreAPI(
     private val instanceSource: InstanceSource,
     private val region: RegionSetting,
     private val onLogin: suspend () -> Unit = {},
+    private val updateChecker: UpdateChecker = UpdateChecker(httpClient),
 ) : CoreAPI {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -64,7 +65,8 @@ class RealCoreAPI(
         }
     }
 
-    override suspend fun checkPluginUpdates(currentVersion: SemVer): PluginUpdateInfo? = null
+    override suspend fun checkPluginUpdates(currentVersion: SemVer): PluginUpdateInfo? =
+        updateChecker.check(currentVersion)
 
     override fun supportMarkdownText(currentVersion: SemVer): String =
         "YouTube Music metadata (tracks, albums, artists, playlists) via a Piped instance." +
