@@ -20,12 +20,15 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import net.swiftzer.semver.SemVer
 
 private const val FORM_WAIT_MS = 900_000L
+
+private const val FORM_THEME_KEY = "piped.form.theme"
 
 /** How long the "instance saved" confirmation stays up before the form closes. */
 private const val FORM_CLOSE_GRACE_MS = 800L
@@ -138,10 +141,12 @@ class RealCoreAPI(
     }
 
     private suspend fun showSettingsForm(instance: String, playback: String, username: String): SettingsFormResult {
-        val messages = Channel<String>(Channel.CONFLATED)
+        // UNLIMITED: a theme toggle posted mid-login must not replace the queued login message.
+        val messages = Channel<String>(Channel.UNLIMITED)
         val subscriber = scope.launch {
             webView.postMessagesFlow().onEach { messages.trySend(it) }.launchIn(this)
-            webView.navigateToHTML(settingsFormHtml(instance, playback, username))
+            val lightTheme = runCatching { storage.getString(FORM_THEME_KEY) }.getOrNull() == "light"
+            webView.navigateToHTML(settingsFormHtml(instance, playback, username, lightTheme))
         }
         try {
             while (true) {
@@ -149,18 +154,21 @@ class RealCoreAPI(
                     ?: throw IllegalStateException("the settings form was closed without saving")
                 val fields = runCatching { json.parseToJsonElement(message).jsonObject }.getOrNull() ?: continue
                 val action = fields["action"]?.jsonPrimitive?.contentOrNull
-                val enteredInstance = fieldOr(fields, "instance", instance)
-                val enteredPlayback = fields["playback"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
-                if (enteredInstance.isEmpty()) {
-                    setFormStatus("Enter the URL of the Piped instance to use.")
+                if (action == "theme") {
+                    saveTheme(fields)
                     continue
                 }
                 if (action == "instance") {
-                    instanceSource.setApi(enteredInstance)
-                    instanceSource.setPlayback(enteredPlayback)
-                    setFormStatus("Instance saved. Piped uses it for all requests.")
-                    // Same host flow as a successful run: the form is done. The
-                    // instance-only user is not logged in, which the caller keeps.
+                    saveInstance(fields)
+                    continue
+                }
+                val activeInstance = instanceSource.api()
+                if (activeInstance == null) {
+                    setFormStatus("Set up a Piped instance first.")
+                    continue
+                }
+                if (action == "skip") {
+                    // The caller keeps the instance-only user logged out.
                     delay(FORM_CLOSE_GRACE_MS)
                     return SettingsFormResult.InstanceOnly
                 }
@@ -172,15 +180,13 @@ class RealCoreAPI(
                     setFormStatus("Username and password are required.")
                     continue
                 }
-                instanceSource.setApi(enteredInstance)
-                instanceSource.setPlayback(enteredPlayback)
                 val auth = PipedAuthClient(httpClient)
                 val token = try {
-                    auth.login(enteredInstance, enteredUsername, password)
+                    auth.login(activeInstance, enteredUsername, password)
                 } catch (e: Exception) {
                     if (createIfMissing) {
                         try {
-                            auth.register(enteredInstance, enteredUsername, password)
+                            auth.register(activeInstance, enteredUsername, password)
                         } catch (e2: Exception) {
                             setFormStatus("Sign-in failed, and registration was rejected by the instance.")
                             continue
@@ -190,7 +196,7 @@ class RealCoreAPI(
                         continue
                     }
                 }
-                session.save(PipedAccount(instance = enteredInstance, username = enteredUsername, token = token))
+                session.save(PipedAccount(instance = activeInstance, username = enteredUsername, token = token))
                 return SettingsFormResult.LoggedIn
             }
             error("unreachable")
@@ -201,15 +207,36 @@ class RealCoreAPI(
 
     /** The host cannot reply to the form directly, so feedback is pushed with evaluateJavaScript. */
     private suspend fun setFormStatus(text: String) {
-        // The form's JS disables both buttons while a message is in flight; any error status must re-enable both,
-        // or "Save instance only" stays disabled for the rest of the form session after one validation error.
+        // The form disables its buttons while a message is in flight; an error status must re-enable them.
         val script = "var s=document.getElementById('status');" +
             "if(s){s.className='error';s.textContent=${json.encodeToString(text)};}" +
-            "var b=document.getElementById('save');if(b){b.disabled=false;}" +
-            "var i=document.getElementById('saveInstance');if(i){i.disabled=false;}"
+            "if(window.disableButtons){window.disableButtons(false);}"
         runCatching { webView.evaluateJavaScript(script) }
     }
 
-    private fun fieldOr(fields: kotlinx.serialization.json.JsonObject, name: String, fallback: String): String =
+    private suspend fun saveTheme(fields: JsonObject) {
+        val light = fields["light"]?.jsonPrimitive?.contentOrNull == "true"
+        runCatching { storage.putString(FORM_THEME_KEY, if (light) "light" else "dark") }
+    }
+
+    private suspend fun saveInstance(fields: JsonObject) {
+        val entered = fields["instance"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+        if (entered.isEmpty()) {
+            setFormStatus("Enter the URL of the Piped instance to use.")
+            return
+        }
+        instanceSource.setApi(entered)
+        instanceSource.setPlayback(fields["playback"]?.jsonPrimitive?.contentOrNull.orEmpty())
+        val active = instanceSource.api().orEmpty()
+        // A session only works on the instance it was created on.
+        val saved = session.load()
+        if (saved != null && saved.instance.trim().trimEnd('/') != active) session.clear()
+        val script = "if(window.onInstanceSaved){window.onInstanceSaved(" +
+            "${json.encodeToString(active)}," +
+            "${json.encodeToString("Instance saved. Sign in, or continue without an account.")});}"
+        runCatching { webView.evaluateJavaScript(script) }
+    }
+
+    private fun fieldOr(fields: JsonObject, name: String, fallback: String): String =
         fields[name]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() } ?: fallback
 }
