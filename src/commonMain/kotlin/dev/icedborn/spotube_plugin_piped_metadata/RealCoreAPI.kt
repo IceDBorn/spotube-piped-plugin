@@ -1,5 +1,6 @@
 package dev.icedborn.spotube_plugin_piped_metadata
 
+import dev.krtirtho.plugin_interfaces.extras.logger.Logger
 import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI
 import dev.krtirtho.plugin_interfaces.host_apis.HttpMethod
 import dev.krtirtho.plugin_interfaces.host_apis.PersistedStorageAPI
@@ -25,6 +26,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import net.swiftzer.semver.SemVer
+import kotlin.coroutines.cancellation.CancellationException
 
 private const val FORM_WAIT_MS = 900_000L
 
@@ -34,6 +36,8 @@ private const val FORM_THEME_KEY = "piped.form.theme"
 private const val FORM_CLOSE_GRACE_MS = 800L
 
 private enum class SettingsFormResult { LoggedIn, InstanceOnly }
+
+private val coreLog = Logger("PipedCore")
 
 /** Piped needs no account for metadata; a per-instance account enables write-through saves to the
  * "Spotube - Albums/Artists/Favorites" playlists and an offline cache of the account state. */
@@ -83,6 +87,7 @@ class RealCoreAPI(
             )) {
                 SettingsFormResult.LoggedIn -> {
                     val account = session.load() ?: throw IllegalStateException("Piped login failed")
+                    coreLog.i { "logged in to the instance as ${account.username}" }
                     loggedInStateFlow.value = true
                     onLogin()
                 }
@@ -95,7 +100,9 @@ class RealCoreAPI(
                         val savedInstance = instanceSource.api()
                         if (savedInstance == null || saved.instance.trim().trimEnd('/') == savedInstance.trimEnd('/')) {
                             loggedIn = true
+                            coreLog.i { "instance-only setup kept the existing session for ${saved.username}" }
                         } else {
+                            coreLog.i { "instance changed to $savedInstance, cleared the session for ${saved.username}" }
                             session.clear()
                         }
                     }
@@ -103,6 +110,7 @@ class RealCoreAPI(
                     // failed listing, so onLogin() cannot surface a revoked session (round-104 corr-2).
 
                     if (loggedIn && saved != null && !listingReachable(saved)) {
+                        coreLog.w { "session for ${saved.username} on ${saved.instance} is no longer reachable, clearing it" }
                         session.clear()
                         loggedIn = false
                     }
@@ -126,19 +134,36 @@ class RealCoreAPI(
     /** True when [account]'s token still answers the authenticated listing. A revoked/expired token yields a
      * non-2xx or a throttle/error 2xx — the silent-null path onLogin() cannot surface (round-104 corr-2). */
     private suspend fun listingReachable(account: PipedAccount): Boolean {
-        val response = runCatching {
+        // try/catch, not runCatching: a cancelled login must NOT read as an unreachable session,
+        // which would clear a still-valid one.
+        val response = try {
             httpClient.request(
                 method = HttpMethod.Get,
                 url = account.instance.trimEnd('/') + "/user/playlists",
                 requestHeaders = mapOf("Accept" to "application/json", "Authorization" to account.token),
                 body = null,
             )
-        }.getOrNull() ?: return false
-        if (response.statusCode !in 200..299) return false
-        val body = response.body ?: return false
-        if (body.isBlank()) return false
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            coreLog.w { "session check on ${account.instance} threw: ${e.message}" }
+            return false
+        }
+        if (response.statusCode !in 200..299) {
+            coreLog.w { "session check on ${account.instance} returned ${response.statusCode}" }
+            return false
+        }
+        val body = response.body
+        if (body == null || body.isBlank()) {
+            coreLog.w { "session check on ${account.instance} returned a blank body" }
+            return false
+        }
         val root = runCatching { json.parseToJsonElement(body) }.getOrNull()
-        return root is JsonArray
+        if (root !is JsonArray) {
+            coreLog.w { "session check on ${account.instance} returned a non-array body: ${body.take(200)}" }
+            return false
+        }
+        return true
     }
 
     private suspend fun showSettingsForm(instance: String, playback: String, username: String): SettingsFormResult {
@@ -170,6 +195,7 @@ class RealCoreAPI(
                 }
                 val activeInstance = instanceSource.api()
                 if (activeInstance == null) {
+                    coreLog.w { "sign-in attempted before an instance was configured" }
                     setFormStatus("Set up a Piped instance first.")
                     continue
                 }
@@ -183,6 +209,7 @@ class RealCoreAPI(
                 val password = fields["password"]?.jsonPrimitive?.contentOrNull.orEmpty()
                 val createIfMissing = fields["createAccount"]?.jsonPrimitive?.contentOrNull == "true"
                 if (enteredUsername.isEmpty() || password.isEmpty()) {
+                    coreLog.w { "sign-in on $activeInstance was sent with a missing username or password" }
                     setFormStatus("Username and password are required.")
                     continue
                 }
@@ -190,10 +217,12 @@ class RealCoreAPI(
                 val token = try {
                     auth.login(activeInstance, enteredUsername, password)
                 } catch (e: Exception) {
+                    coreLog.w { "sign-in on $activeInstance as $enteredUsername failed: ${e.message}" }
                     if (createIfMissing) {
                         try {
                             auth.register(activeInstance, enteredUsername, password)
                         } catch (e2: Exception) {
+                            coreLog.w { "registration on $activeInstance as $enteredUsername failed: ${e2.message}" }
                             setFormStatus("Sign-in failed, and registration was rejected by the instance.")
                             continue
                         }

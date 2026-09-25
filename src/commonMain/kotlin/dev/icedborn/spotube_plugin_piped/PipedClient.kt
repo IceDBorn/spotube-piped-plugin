@@ -1,6 +1,8 @@
 package dev.icedborn.spotube_plugin_piped
 
+import dev.icedborn.spotube_plugin_piped_metadata.pathWithoutQuery
 import dev.icedborn.spotube_plugin_piped_metadata.percentEncoded
+import dev.krtirtho.plugin_interfaces.extras.logger.Logger
 import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI
 import dev.krtirtho.plugin_interfaces.host_apis.HttpMethod
 import kotlinx.serialization.json.Json
@@ -20,6 +22,8 @@ object PipedSearchFilter {
     const val MUSIC_PLAYLISTS = "music_playlists"
     const val MUSIC_ARTISTS = "music_artists"
 }
+
+private val audioLog = Logger("PipedAudio")
 
 /** Thin JSON client over a Piped API instance. */
 class PipedClient(
@@ -41,13 +45,17 @@ class PipedClient(
         } catch (t: CancellationException) {
             throw t
         } catch (t: Throwable) {
+            audioLog.w { "search $filter failed: ${t.message}" }
             return null
         }
         // Key-presence doctrine (metadata-twin parity): throttle bodies (200 + '{}'/'{"error":…}') decode to empty
         // pages; only a JSON object with the `items` key is authoritative — anything else is null (failed fetch).
         if (body.isBlank()) return null
         val root = runCatching { json.parseToJsonElement(body) }.getOrNull()
-        if (root !is JsonObject || root["items"] !is JsonArray) return null
+        if (root !is JsonObject || root["items"] !is JsonArray) {
+            audioLog.w { "search $filter returned no items array: ${body.take(200)}" }
+            return null
+        }
         // Accept "stream" and "video" rows (music_songs can carry either). A keyed body that fails to decode
         // is also a FAILED-fetch null, same contract.
         return runCatching { json.decodeFromString<PipedSearchPage>(body) }
@@ -69,6 +77,7 @@ class PipedClient(
         } catch (t: CancellationException) {
             throw t
         } catch (t: Throwable) {
+            audioLog.w { "streams $videoId failed: ${t.message}" }
             return null
         }
         // Gate on the CONSUMED field (audioStreams), not the metadata twin's relatedStreams, which the audio
@@ -76,7 +85,10 @@ class PipedClient(
 
         if (body.isBlank()) return null
         val root = runCatching { json.parseToJsonElement(body) }.getOrNull()
-        if (root !is JsonObject || root["audioStreams"] !is JsonArray) return null
+        if (root !is JsonObject || root["audioStreams"] !is JsonArray) {
+            audioLog.w { "streams $videoId returned no audioStreams array: ${body.take(200)}" }
+            return null
+        }
         return runCatching { json.decodeFromString<PipedStreamInfo>(body) }.getOrNull()
     }
 
@@ -88,7 +100,11 @@ class PipedClient(
             body = null,
         )
         if (response.statusCode !in 200..299) {
-            throw IllegalStateException("Piped $path failed: HTTP ${response.statusCode} - ${response.body}")
+            // The path is logged without its query string: a search term is the user's text.
+            audioLog.w { "Piped ${path.pathWithoutQuery()} -> HTTP ${response.statusCode}: ${response.body?.take(200)}" }
+            // No body here: the log line above already carries the truncated one, and this message
+            // is itself logged by every orNull/catch upstream, which would print the body twice.
+            throw IllegalStateException("Piped ${path.pathWithoutQuery()} failed: HTTP ${response.statusCode}")
         }
         return response.body ?: ""
     }

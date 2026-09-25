@@ -24,7 +24,7 @@ class RealMetadataSearchAPI(
 
     override suspend fun search(query: String): List<MetadataSearchResult> {
         if (query.isBlank()) return emptyList()
-        return runCatching {
+        return orNull("search all ${query.length} chars") {
             coroutineScope {
                 // The ALL tab combines YouTube Music and plain YouTube: songs first,
                 // then videos from normal YouTube, then artists/albums/playlists.
@@ -44,13 +44,13 @@ class RealMetadataSearchAPI(
                     addAll(all[4])
                 }
             }
-        }.getOrDefault(emptyList())
+        } ?: emptyList()
     }
 
     /** Regular YouTube video search, surfaced as songs so the app can play them. */
     suspend fun searchVideos(query: String, pagination: PaginationStrategy? = null): PaginationResult<MetadataSearchResult.Track> {
         if (query.isBlank()) return emptyPagination()
-        return runCatching {
+        return orNull("search videos ${query.length} chars") {
             val token = pagination.continuationToken()
             val page = client.search(query, PipedSearchFilter.VIDEOS, token)
             val found = page?.items.orEmpty()
@@ -62,7 +62,7 @@ class RealMetadataSearchAPI(
                 totalCount = items.size,
                 nextPagination = nextContinuation(page?.nextpage, token),
             )
-        }.getOrDefault(emptyPagination())
+        } ?: emptyPagination()
     }
 
     override suspend fun searchTracks(
@@ -70,7 +70,7 @@ class RealMetadataSearchAPI(
         pagination: PaginationStrategy?,
     ): PaginationResult<MetadataSearchResult.Track> {
         if (query.isBlank()) return emptyPagination()
-        return runCatching {
+        return orNull("search tracks ${query.length} chars") {
             val token = pagination.continuationToken()
             val page = client.search(query, PipedSearchFilter.MUSIC_SONGS, token)
             val found = page?.items.orEmpty()
@@ -82,7 +82,7 @@ class RealMetadataSearchAPI(
                 totalCount = items.size,
                 nextPagination = nextContinuation(page?.nextpage, token),
             )
-        }.getOrDefault(emptyPagination())
+        } ?: emptyPagination()
     }
 
     override suspend fun searchArtists(
@@ -90,7 +90,7 @@ class RealMetadataSearchAPI(
         pagination: PaginationStrategy?,
     ): PaginationResult<MetadataSearchResult.Artist> {
         if (query.isBlank()) return emptyPagination()
-        return runCatching {
+        return orNull("search artists ${query.length} chars") {
             val token = pagination.continuationToken()
             val page = client.search(query, PipedSearchFilter.MUSIC_ARTISTS, token)
             val found = page?.items.orEmpty().mapNotNull { it.toArtist() }
@@ -100,7 +100,7 @@ class RealMetadataSearchAPI(
                 totalCount = items.size,
                 nextPagination = nextContinuation(page?.nextpage, token),
             )
-        }.getOrDefault(emptyPagination())
+        } ?: emptyPagination()
     }
 
     override suspend fun searchAlbums(
@@ -108,7 +108,7 @@ class RealMetadataSearchAPI(
         pagination: PaginationStrategy?,
     ): PaginationResult<MetadataSearchResult.Album> {
         if (query.isBlank()) return emptyPagination()
-        return runCatching {
+        return orNull("search albums ${query.length} chars") {
             val token = pagination.continuationToken()
             val page = client.search(query, PipedSearchFilter.MUSIC_ALBUMS, token)
             val found = page?.items.orEmpty().mapNotNull { it.toAlbumBasic() }
@@ -118,7 +118,7 @@ class RealMetadataSearchAPI(
                 totalCount = items.size,
                 nextPagination = nextContinuation(page?.nextpage, token),
             )
-        }.getOrDefault(emptyPagination())
+        } ?: emptyPagination()
     }
 
     override suspend fun searchPlaylists(
@@ -126,7 +126,7 @@ class RealMetadataSearchAPI(
         pagination: PaginationStrategy?,
     ): PaginationResult<MetadataSearchResult.Playlist> {
         if (query.isBlank()) return emptyPagination()
-        return runCatching {
+        return orNull("search playlists ${query.length} chars") {
             val token = pagination.continuationToken()
             val page = client.search(query, PipedSearchFilter.MUSIC_PLAYLISTS, token)
             val found = page?.items.orEmpty().mapNotNull { it.toPlaylist() }
@@ -136,7 +136,7 @@ class RealMetadataSearchAPI(
                 totalCount = items.size,
                 nextPagination = nextContinuation(page?.nextpage, token),
             )
-        }.getOrDefault(emptyPagination())
+        } ?: emptyPagination()
     }
 
     override suspend fun searchUsers(

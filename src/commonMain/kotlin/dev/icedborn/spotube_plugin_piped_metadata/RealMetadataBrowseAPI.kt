@@ -98,7 +98,7 @@ internal class RealMetadataBrowseAPI(
 
     private suspend fun section(spec: SectionSpec): MetadataBrowseSection? {
         built[spec.key]?.let { (at, cached) -> if (epochMillis() - at < SECTION_TTL_MS) return cached }
-        val result = orNull { spec.build() }?.takeIf { it.items.isNotEmpty() }
+        val result = orNull("home section ${spec.key}") { spec.build() }?.takeIf { it.items.isNotEmpty() }
         built[spec.key] = epochMillis() to result
         return result
     }

@@ -13,3 +13,6 @@ internal fun String.percentEncoded(): String = buildString {
         }
     }
 }
+
+/** A request path without its query string, so a search term never reaches a log line. */
+internal fun String.pathWithoutQuery(): String = substringBefore('?')

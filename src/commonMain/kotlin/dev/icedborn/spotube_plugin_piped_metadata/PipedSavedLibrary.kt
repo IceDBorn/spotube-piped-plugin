@@ -2,6 +2,7 @@ package dev.icedborn.spotube_plugin_piped_metadata
 
 import kotlin.coroutines.cancellation.CancellationException
 
+import dev.krtirtho.plugin_interfaces.extras.logger.Logger
 import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI
 import dev.krtirtho.plugin_interfaces.host_apis.HttpMethod
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
@@ -50,6 +51,8 @@ internal enum class SavedKind(val playlistName: String) {
     ARTIST("Spotube - Artists"),
     TRACK("Spotube - Favorites"),
 }
+
+private val mirrorLog = Logger("PipedSavedLibrary")
 
 /** Account cache + write-through. Reads serve the local snapshot (refreshed online); saves write through when online,
  * and the local library is the source of truth — no mirror to converge. */
@@ -164,7 +167,7 @@ internal class PipedSavedLibrary(
     private suspend fun refreshIfStale() {
         refreshMutex.withLock {
             if (!needsRefresh()) return@withLock
-            runCatching { doRefresh() }
+            orNull("account refresh") { doRefresh() }
         }
     }
 
@@ -172,7 +175,7 @@ internal class PipedSavedLibrary(
     suspend fun refreshCache() {
         val account = sessionProvider() ?: return
         refreshMutex.withLock {
-            runCatching { doRefresh(account) }
+            orNull("account refresh") { doRefresh(account) }
         }
     }
 
@@ -183,7 +186,7 @@ internal class PipedSavedLibrary(
 
     private suspend fun doRefresh() {
         val account = sessionProvider() ?: return
-        runCatching { doRefresh(account) }
+        orNull("account refresh") { doRefresh(account) }
     }
 
     private suspend fun doRefresh(account: PipedAccount) {
@@ -1166,6 +1169,7 @@ internal class PipedSavedLibrary(
             // A cancelled save must PROPAGATE, never mask as a generic mirror-write failure: the add POST may
             // already have appended rows and the host must know the operation was ABORTED (twin remove() same rule, round-104).
             if (t is CancellationException) throw t
+            mirrorLog.w { "save ${kind.playlistName} to ${account.instance} failed: ${t.message}" }
             false
         }
         if (!mirrorOk) {
@@ -1364,6 +1368,7 @@ internal class PipedSavedLibrary(
             // A cancelled unsave must not silently complete: it already deleted mirror rows / wrote
             // bookkeeping, and the host must know the operation was aborted.
             if (t is CancellationException) throw t
+            mirrorLog.w { "remove ${kind.playlistName} from ${account.instance} failed: ${t.message}" }
         }
     }
 

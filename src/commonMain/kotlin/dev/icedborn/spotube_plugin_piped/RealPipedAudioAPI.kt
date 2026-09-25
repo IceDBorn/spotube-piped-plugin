@@ -1,6 +1,7 @@
 package dev.icedborn.spotube_plugin_piped
 
 import kotlin.coroutines.cancellation.CancellationException
+import dev.krtirtho.plugin_interfaces.extras.logger.Logger
 import dev.krtirtho.plugin_interfaces.plugin_apis.audio.AudioAPI
 import dev.krtirtho.plugin_interfaces.plugin_apis.audio.AudioFormat
 import dev.krtirtho.plugin_interfaces.plugin_apis.audio.AudioQuality
@@ -10,6 +11,7 @@ import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.Thumbnail
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlin.math.abs
 
+private val audioApiLog = Logger("PipedAudioAPI")
 private const val MAX_SOURCES = 5
 private const val PLAYABLE_CONFIDENCE = 0.8f
 private val YOUTUBE_ID_REGEX = Regex("[A-Za-z0-9_-]{11}")
@@ -46,6 +48,7 @@ class RealPipedAudioAPI(
             throw e
         } catch (e: Exception) {
             // Logging a play must never block playback.
+            audioApiLog.w { "play log failed for ${track.id}: ${e.message}" }
         }
         track.externalUri?.let { uri ->
             val videoId = extractVideoId(uri)
@@ -75,7 +78,10 @@ class RealPipedAudioAPI(
         // an ATTEMPTED backup that FAILED throws (retry) only when NO usable candidate survived (round-96/106).
 
         if (items.isEmpty() && videos == null) {
-            throw IllegalStateException("Piped search failed for \"$query\" (throttled or error body)")
+            // The query is the user's search text, so only its length is logged.
+            audioApiLog.w { "no usable source for a ${query.length}-char query (songs=${songs?.size}, videos=${videos?.size})" }
+            // Length, not the text: the host may log this message, and the query is the user's.
+            throw IllegalStateException("Piped search failed for a ${query.length}-char query (throttled or error body)")
         }
         return items
     }
@@ -84,13 +90,19 @@ class RealPipedAudioAPI(
         val videoId = source.id
         // Null = FAILED fetch (throttle), never authoritative 'no audio': degrade to EMPTY so the host proceeds to
         // the next candidate — an exception aborts the whole MAX_SOURCES chain at the first throttled /streams (round-106).
-        val info = client.streams(videoId) ?: return emptyList()
+        val info = client.streams(videoId) ?: run {
+            audioApiLog.w { "no stream info for $videoId, the host moves to the next candidate" }
+            return emptyList()
+        }
 
         val streams = info.audioStreams
             .filter { it.url.isNotBlank() }
             .mapNotNull { it.toLossyStream() }
 
-        if (streams.isEmpty()) return emptyList()
+        if (streams.isEmpty()) {
+            audioApiLog.w { "no playable audio stream for $videoId" }
+            return emptyList()
+        }
 
         return listOf(
             AudioSource.Streamed(

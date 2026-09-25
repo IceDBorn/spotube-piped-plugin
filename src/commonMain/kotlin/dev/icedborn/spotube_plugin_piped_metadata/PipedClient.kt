@@ -1,5 +1,6 @@
 package dev.icedborn.spotube_plugin_piped_metadata
 
+import dev.krtirtho.plugin_interfaces.extras.logger.Logger
 import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI
 import dev.krtirtho.plugin_interfaces.host_apis.HttpMethod
 import kotlinx.serialization.json.JsonArray
@@ -7,12 +8,17 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 
+private val clientLog = Logger("PipedClient")
+
     /** Decodes a /playlists page: null = FAILED fetch, never authoritative-empty. '{}'/'{"error":…}'
      * (throttles) decodes to an empty page that reads as proven-empty everywhere — playlist(), mirror walk. */
 internal fun decodePlaylistPage(body: String): PipedPlaylistPage? {
     if (body.isBlank()) return null
     val root = runCatching { json.parseToJsonElement(body) }.getOrNull()
-    if (root !is JsonObject || root["relatedStreams"] !is JsonArray) return null
+    if (root !is JsonObject || root["relatedStreams"] !is JsonArray) {
+        clientLog.w { "playlist page without relatedStreams: ${body.take(200)}" }
+        return null
+    }
     return json.decodeFromString(body)
 }
 
@@ -33,7 +39,10 @@ class PipedClient(
 
         if (body.isBlank()) return null
         val root = runCatching { json.parseToJsonElement(body) }.getOrNull()
-        if (root !is JsonObject || root["items"] !is JsonArray) return null
+        if (root !is JsonObject || root["items"] !is JsonArray) {
+            clientLog.w { "${path.pathWithoutQuery()} filter=$filter returned no items array: ${body.take(200)}" }
+            return null
+        }
         return json.decodeFromString(body)
     }
 
@@ -43,7 +52,10 @@ class PipedClient(
         // (throttle), never authoritative — the default-coerced decode must not be cached as real metadata.
         if (body.isBlank()) return null
         val root = runCatching { json.parseToJsonElement(body) }.getOrNull()
-        if (root !is JsonObject || root["relatedStreams"] !is JsonArray) return null
+        if (root !is JsonObject || root["relatedStreams"] !is JsonArray) {
+            clientLog.w { "streams $videoId without relatedStreams: ${body.take(200)}" }
+            return null
+        }
         return json.decodeFromString(body)
     }
 
@@ -62,7 +74,10 @@ class PipedClient(
 
         if (body.isBlank()) return null
         val root = runCatching { json.parseToJsonElement(body) }.getOrNull()
-        if (root !is JsonObject || root["relatedStreams"] !is JsonArray) return null
+        if (root !is JsonObject || root["relatedStreams"] !is JsonArray) {
+            clientLog.w { "playlist $playlistId page without relatedStreams: ${body.take(200)}" }
+            return null
+        }
         return json.decodeFromString(body)
     }
 
@@ -73,7 +88,10 @@ class PipedClient(
 
         if (body.isBlank()) return null
         val root = runCatching { json.parseToJsonElement(body) }.getOrNull()
-        if (root !is JsonObject || root["relatedStreams"] !is JsonArray) return null
+        if (root !is JsonObject || root["relatedStreams"] !is JsonArray) {
+            clientLog.w { "channel $channelId without relatedStreams: ${body.take(200)}" }
+            return null
+        }
         return json.decodeFromString(body)
     }
 
@@ -111,7 +129,11 @@ class PipedClient(
             body = null,
         )
         if (response.statusCode !in 200..299) {
-            throw IllegalStateException("Piped $path failed: HTTP ${response.statusCode} - ${response.body}")
+            // The path is logged without its query string: a search term is the user's text.
+            clientLog.w { "Piped ${path.pathWithoutQuery()} -> HTTP ${response.statusCode}: ${response.body?.take(200)}" }
+            // No body here: the log line above already carries the truncated one, and this message
+            // is itself logged by every orNull/catch upstream, which would print the body twice.
+            throw IllegalStateException("Piped ${path.pathWithoutQuery()} failed: HTTP ${response.statusCode}")
         }
         return response.body ?: ""
     }

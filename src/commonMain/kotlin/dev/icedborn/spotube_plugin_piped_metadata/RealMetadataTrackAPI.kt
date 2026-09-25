@@ -1,9 +1,12 @@
 package dev.icedborn.spotube_plugin_piped_metadata
 
+import dev.krtirtho.plugin_interfaces.extras.logger.Logger
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationResult
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrackAPI
+
+private val trackLog = Logger("PipedTracks")
 
 internal class RealMetadataTrackAPI(
     private val client: PipedClient,
@@ -28,8 +31,12 @@ internal class RealMetadataTrackAPI(
         val ids = mirror.allSavedTrackIds()
         val slice = ids.drop(paging.offset).take(paging.limit)
         val items = slice.mapConcurrently { id ->
-            runCatching { store.cachedTrack(id) ?: getTrack(id) }.getOrNull()
+            orNull { store.cachedTrack(id) ?: getTrack(id) }
         }.filterNotNull()
+        // One line for the page, never one per id: a throttled instance fails every item at once.
+        if (items.size < slice.size) {
+            trackLog.w { "saved tracks page: ${slice.size - items.size} of ${slice.size} ids failed (offset ${paging.offset})" }
+        }
         return PaginationResult(
             items = items,
             totalCount = ids.size,
@@ -64,7 +71,7 @@ internal class RealMetadataTrackAPI(
         limit: Int,
     ): List<MetadataTrack> {
         if (seedTrackIds.isEmpty() || limit <= 0) return emptyList()
-        return runCatching {
+        return orNull("radio queue from ${seedTrackIds.first()}") {
             val out = LinkedHashMap<String, MetadataTrack>()
             // The endless queue must stay YouTube-Music-only; /streams related lists are plain YouTube (lives,
             // TV clips, mixes). Use the YT Music radio mix instead — resolved as a "RDAMVM<videoId>" playlist.
@@ -88,14 +95,13 @@ internal class RealMetadataTrackAPI(
                 }
             }
             out.values.toList()
-        }.getOrDefault(emptyList())
+        } ?: emptyList()
     }
 
     /** YT Music radio mix rows, minus lives and long mixes. */
     private suspend fun ytmRadioItems(seedVideoId: String): List<PipedSearchItem> {
-        val mix = runCatching {
-            client.playlist("RDAMVM$seedVideoId")
-        }.getOrNull() ?: return emptyList()
+        val mix = orNull("radio mix $seedVideoId") { client.playlist("RDAMVM$seedVideoId") }
+            ?: return emptyList()
         return mix.relatedStreams.filter { item ->
             item.type == "stream" && item.duration in 20..900
         }

@@ -22,13 +22,12 @@ class RealMetadataUserAPI(
             )
         }
         if (!YOUTUBE_CHANNEL_ID.matches(id)) return null
-        return runCatching {
+        return orNull("channel $id") {
             // Same cached-value trust as channelNameFor / fetchChannel: a cached channel with a blank name is
             // a MISS (CHANNEL_KEY is never invalidated — trusting it would render the user empty forever).
             val channel = store.cachedChannel(id)?.takeIf { it.name.isNotBlank() } ?: client.channel(id)
                 ?.also { store.cacheChannel(id, it) }
-                ?: return@runCatching null
-            channel.toUser()
-        }.getOrNull()
+            channel?.toUser()
+        }
     }
 }

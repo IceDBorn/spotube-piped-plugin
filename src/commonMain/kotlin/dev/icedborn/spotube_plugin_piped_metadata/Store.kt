@@ -1,5 +1,6 @@
 package dev.icedborn.spotube_plugin_piped_metadata
 
+import dev.krtirtho.plugin_interfaces.extras.logger.Logger
 import dev.krtirtho.plugin_interfaces.host_apis.PersistedStorageAPI
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationResult
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
@@ -284,12 +285,15 @@ private val rowsLocks = HashMap<String, Mutex>()
 internal suspend fun <T> withRowsLock(key: String, block: suspend () -> T): T =
     rowsLocks.getOrPut(key) { Mutex() }.withLock { block() }
 
-/** [block]'s result, or null when it throws; cancellation still propagates. */
-internal suspend fun <T> orNull(block: suspend () -> T?): T? = try {
+private val storeLog = Logger("PipedStore")
+
+/** [block]'s result, or null when it throws; cancellation still propagates. A [label] names the call in the log. */
+internal suspend fun <T> orNull(label: String? = null, block: suspend () -> T?): T? = try {
     block()
 } catch (e: CancellationException) {
     throw e
 } catch (e: Exception) {
+    if (label != null) storeLog.w { "$label failed: ${e.message}" }
     null
 }
 

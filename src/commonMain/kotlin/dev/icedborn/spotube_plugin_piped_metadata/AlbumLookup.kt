@@ -1,5 +1,9 @@
 package dev.icedborn.spotube_plugin_piped_metadata
 
+import dev.krtirtho.plugin_interfaces.extras.logger.Logger
+
+private val albumLog = Logger("PipedAlbum")
+
 private const val ALBUM_CANDIDATE_LIMIT = 7
 private const val ALBUM_FALLBACK_PAGE_LIMIT = 6
 
@@ -64,9 +68,9 @@ internal class AlbumLookup(
             val id = playlistIdOf(candidate.url)
             val page = store.cachedAlbumPlaylist(id) ?: run {
                 counter.requests++
-                // runCatching: get() THROWS on non-2xx (429/5xx) before its null guard; that throw must not
+                // orNull: get() THROWS on non-2xx (429/5xx) before its null guard; that throw must not
                 // abort the ranked chain (round-47) — a null means no page-1 evidence: the candidate is inconclusive.
-                val fetched = runCatching { client.playlist(id) }.getOrNull() ?: return@run null
+                val fetched = orNull("album page $id") { client.playlist(id) } ?: return@run null
                 // A decodable page — even genuinely EMPTY — is authoritative: cache it (the evidence walk reads
                 // the cache; page()'s extension re-anchors a throttled decodable empty, so it self-heals not freezes).
                 store.cacheAlbumPlaylist(id, fetched)
@@ -104,7 +108,7 @@ internal class AlbumLookup(
                 // A null continuation or non-2xx throw is a failed fetch, not a proven end — inconclusive;
                 // the lower-ranked candidates still get their walks.
                 counter.requests++
-                val next = runCatching { client.playlistNextPage(candId, t) }.getOrNull() ?: run {
+                val next = orNull("album page $candId next") { client.playlistNextPage(candId, t) } ?: run {
                     inconclusive = true
                     break
                 }
@@ -127,6 +131,7 @@ internal class AlbumLookup(
             }
         }
         if (inconclusive) {
+            albumLog.w { "album resolution inconclusive for $videoId after ${distinct.size} candidates" }
             // Any unproven chain blocks the permanent 'none' (it would freeze the real album out); propagate
             // like a transport failure so doRefresh's retry latch re-attempts it.
             throw IllegalStateException("album resolution inconclusive (candidate chains unproven)")
