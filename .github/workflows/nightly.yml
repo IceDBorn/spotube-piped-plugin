@@ -1,0 +1,58 @@
+name: Nightly
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'LICENSE', 'logo.png']
+
+# A newer push cancels the older run, so the nightly tag never points at an older commit.
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # Tags and full history, so the notes step can diff against the last stable release.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6
+
+      # Next patch over the last stable, so every nightly outranks the release it was built on.
+      - name: Read version
+        id: version
+        run: |
+          base=$(sed -n 's/^pluginVersion=//p' gradle.properties)
+          IFS=. read -r major minor patch <<< "$base"
+          echo "version=$major.$minor.$((patch + 1))-nightly.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - name: Test
+        run: ./gradlew :jvmTest :jsNodeTest
+
+      - name: Build
+        run: ./gradlew -PpluginVersion=${{ steps.version.outputs.version }} :generatePluginJson --rerun-tasks :packageProductionPlugin
+
+      # Recreate the release: moving the tag leaves the old asset and title in place.
+      # The tag is always "nightly", so the update check reads the version from the title.
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cp build/distributions/plugin-production.smplug spotube-plugin-piped.smplug
+          # Commits since the last stable tag, which is what a nightly user gets over stable.
+          prev=$(git describe --tags --abbrev=0 --exclude nightly --exclude "$VERSION" HEAD 2>/dev/null || true)
+          git log --no-merges --format='- %s (%h)' ${prev:+$prev..}HEAD > notes.md
+          { echo "Nightly build of $GITHUB_SHA."; echo; cat notes.md; } > body.md
+          gh release delete nightly --cleanup-tag --yes || true
+          gh release create nightly spotube-plugin-piped.smplug \
+            --prerelease --target "$GITHUB_SHA" --title "$VERSION" \
+            --notes-file body.md

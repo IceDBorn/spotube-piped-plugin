@@ -8,6 +8,7 @@ internal fun settingsFormHtml(
     lightTheme: Boolean,
     region: String,
     detectedRegion: String?,
+    channel: String,
 ): String {
     val values = mapOf(
         "THEME" to if (lightTheme) "light" else "dark",
@@ -15,6 +16,7 @@ internal fun settingsFormHtml(
         "PLAYBACK" to escapeAttribute(playback),
         "USERNAME" to escapeAttribute(username),
         "REGIONS" to regionOptions(region, detectedRegion),
+        "CHANNELS" to channelOptions(channel),
     )
     // One pass, so a value that contains a placeholder name is never substituted again.
     return PLACEHOLDER.replace(FORM_HTML) { values[it.groupValues[1]] ?: it.value }
@@ -31,6 +33,16 @@ private fun regionOptions(selected: String, detected: String?): String {
         "<option value=\"$code\"$mark>${escapeAttribute(name)}</option>"
     }
 }
+
+private fun channelOptions(selected: String): String =
+    listOf(
+        UpdateChannel.AUTO to "Auto",
+        UpdateChannel.STABLE to "Stable",
+        UpdateChannel.NIGHTLY to "Nightly",
+    ).joinToString("") { (channel, label) ->
+        val mark = if (channel.name == selected) " selected" else ""
+        "<option value=\"${channel.name}\"$mark>$label</option>"
+    }
 
 private fun escapeAttribute(value: String): String = value
     .replace("&", "&amp;")
@@ -146,6 +158,13 @@ private val FORM_HTML = """<!doctype html>
     <select id="region">__REGIONS__</select>
     <p class="hint">Picks the YouTube Music charts on Home. Auto follows the system time zone, and countries
     without charts use Global. Spotube keeps Home until it restarts, so a change shows after a restart.</p>
+
+    <label for="channel">Update channel</label>
+    <select id="channel">__CHANNELS__</select>
+    <p class="hint">Picks which GitHub release the update check offers. Auto follows the installed build, so a
+    nightly install stays on nightlies. After switching from Nightly to Stable, no update is offered until a
+    stable release is newer than the installed nightly. To go back sooner, reinstall a stable build from the
+    Releases page.</p>
   </form>
 
   <p id="status"></p>
@@ -208,6 +227,10 @@ private val FORM_HTML = """<!doctype html>
     document.documentElement.dataset.theme = light ? 'light' : 'dark';
     refreshTheme();
     send(JSON.stringify({ action: 'theme', light: light }));
+  });
+  el('channel').addEventListener('change', function () {
+    send(JSON.stringify({ action: 'channel', channel: el('channel').value }));
+    setStatus('Update channel saved.', false);
   });
   el('region').addEventListener('change', function () {
     send(JSON.stringify({ action: 'region', region: el('region').value }));

@@ -2,11 +2,6 @@ name: Release
 
 on:
   workflow_dispatch:
-    inputs:
-      nightly:
-        description: Nightly release (moves the "nightly" tag, marked as prerelease)
-        type: boolean
-        default: false
 
 jobs:
   release:
@@ -14,7 +9,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Tags and full history, so the notes step can diff against the last stable release.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
@@ -29,24 +27,22 @@ jobs:
 
       - name: Read version
         id: version
+        run: echo "version=$(sed -n 's/^pluginVersion=//p' gradle.properties)" >> "$GITHUB_OUTPUT"
+
+      # Commits since the last stable tag; the file keeps commit subjects out of the shell script.
+      - name: Release notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          v=$(sed -n '/spotubePlugin {/,/}/ s/.*version = "\(.*\)"/\1/p' build.gradle.kts | head -1)
-          echo "version=$v" >> "$GITHUB_OUTPUT"
+          prev=$(git describe --tags --abbrev=0 --exclude nightly --exclude "$VERSION" HEAD 2>/dev/null || true)
+          git log --no-merges --format='- %s (%h)' ${prev:+$prev..}HEAD > notes.md
 
       - name: Prepare asset
         run: cp build/distributions/plugin-production.smplug spotube-plugin-piped.smplug
 
-      # action-gh-release reuses an existing tag but leaves it where it was, so a nightly
-      # would keep pointing at the first commit while only the asset moved.
-      - name: Move nightly tag
-        if: inputs.nightly
-        run: |
-          git tag -f nightly
-          git push -f origin nightly
-
       - uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ inputs.nightly && 'nightly' || steps.version.outputs.version }}
-          prerelease: ${{ inputs.nightly }}
+          tag_name: ${{ steps.version.outputs.version }}
+          body_path: notes.md
           files: spotube-plugin-piped.smplug
           fail_on_unmatched_files: true

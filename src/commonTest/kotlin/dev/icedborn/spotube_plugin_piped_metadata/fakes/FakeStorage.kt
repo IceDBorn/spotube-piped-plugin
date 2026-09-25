@@ -3,7 +3,7 @@ package dev.icedborn.spotube_plugin_piped_metadata.fakes
 import dev.krtirtho.plugin_interfaces.host_apis.PersistedStorageAPI
 
 /** In-memory stand-in for the host persistence API. */
-class FakeStorage : PersistedStorageAPI {
+open class FakeStorage : PersistedStorageAPI {
     val values = mutableMapOf<String, String>()
 
     override suspend fun putString(key: String, value: String) {
