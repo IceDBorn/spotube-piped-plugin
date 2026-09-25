@@ -1,5 +1,6 @@
 package dev.icedborn.spotube_plugin_piped
 
+import dev.icedborn.spotube_plugin_piped_metadata.PipedClient
 import dev.icedborn.spotube_plugin_piped_metadata.fakes.FakeHttp
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlin.test.Test
@@ -13,7 +14,7 @@ import kotlinx.coroutines.test.runTest
 /** The audio client differs from the metadata twin: a non-2xx is a null (failed fetch), not a throw. */
 class AudioPipedClientTest {
 
-    private fun client(http: FakeHttp) = PipedClient(http) { "https://piped.example" }
+    private fun client(http: FakeHttp) = AudioPipedClient(PipedClient(http) { "https://piped.example" })
 
     private val twoSongs = """
         {"items":[
@@ -80,7 +81,7 @@ class AudioPipedClientTest {
     @Test
     fun `the unresolved-source error names the query length, not the text`() = runTest {
         val http = FakeHttp().apply { onPath("/search", status = 429, body = "throttled") }
-        val api = RealPipedAudioAPI(PipedClient(http) { "https://piped.example" })
+        val api = RealPipedAudioAPI(AudioPipedClient(PipedClient(http) { "https://piped.example" }))
         val track = MetadataTrack(
             id = "notavideoid00",
             title = "My Private Search",

@@ -9,6 +9,7 @@ import dev.icedborn.spotube_plugin_piped_metadata.Charts
 import dev.icedborn.spotube_plugin_piped_metadata.EntityStore
 import dev.icedborn.spotube_plugin_piped_metadata.InstanceSource
 import dev.icedborn.spotube_plugin_piped_metadata.LocalLibrary
+import dev.icedborn.spotube_plugin_piped_metadata.PipedClient
 import dev.icedborn.spotube_plugin_piped_metadata.PipedSavedLibrary
 import dev.icedborn.spotube_plugin_piped_metadata.PlayHistory
 import dev.icedborn.spotube_plugin_piped_metadata.RealCoreAPI
@@ -74,7 +75,7 @@ fun main() {
         val session = AccountSession(store)
         val account = session.load()
         val instanceSource = InstanceSource(store, account?.instance)
-        val client = dev.icedborn.spotube_plugin_piped_metadata.PipedClient(httpClient) {
+        val client = PipedClient(httpClient) {
             instanceSource.requireApi()
         }
         val albumLookup = AlbumLookup(client, store)
@@ -100,7 +101,13 @@ fun main() {
         zipline.bind<CoreAPI>(CoreAPI_SERVICE_NAME, core)
         zipline.bind<AudioAPI>(
             AudioAPI_SERVICE_NAME,
-            RealPipedAudioAPI(PipedClient(httpClient) { instanceSource.playback() ?: instanceSource.requireApi() }) {
+            RealPipedAudioAPI(
+                AudioPipedClient(
+                    PipedClient(httpClient) {
+                        instanceSource.playback() ?: instanceSource.requireApi()
+                    }
+                )
+            ) {
                 history.record(it)
             },
         )

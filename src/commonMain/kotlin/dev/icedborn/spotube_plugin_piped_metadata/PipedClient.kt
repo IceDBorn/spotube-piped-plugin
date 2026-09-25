@@ -46,7 +46,7 @@ class PipedClient(
         return json.decodeFromString(body)
     }
 
-    suspend fun streams(videoId: String): PipedStreamsInfo? {
+    suspend fun streamsForMetadata(videoId: String): PipedStreamsInfo? {
         val body = get("/streams/${videoId.percentEncoded()}")
         // Same key-presence doctrine: a blank body or a JSON object WITHOUT `relatedStreams` is a FAILED fetch
         // (throttle), never authoritative — the default-coerced decode must not be cached as real metadata.
@@ -54,6 +54,19 @@ class PipedClient(
         val root = runCatching { json.parseToJsonElement(body) }.getOrNull()
         if (root !is JsonObject || root["relatedStreams"] !is JsonArray) {
             clientLog.w { "streams $videoId without relatedStreams: ${body.take(200)}" }
+            return null
+        }
+        return json.decodeFromString(body)
+    }
+
+    /** The same /streams body read for playback. Audio consumes [PipedStreamsInfo.audioStreams] and never
+     * reads relatedStreams, so the gate is on the field the caller uses (round-108). */
+    suspend fun streamsForAudio(videoId: String): PipedStreamsInfo? {
+        val body = get("/streams/${videoId.percentEncoded()}")
+        if (body.isBlank()) return null
+        val root = runCatching { json.parseToJsonElement(body) }.getOrNull()
+        if (root !is JsonObject || root["audioStreams"] !is JsonArray) {
+            clientLog.w { "streams $videoId without audioStreams: ${body.take(200)}" }
             return null
         }
         return json.decodeFromString(body)

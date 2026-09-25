@@ -25,7 +25,7 @@ internal class AlbumLookup(
         val counter = RequestCounter()
         val info = store.cachedStreams(videoId) ?: run {
             counter.requests++
-            client.streams(videoId)
+            client.streamsForMetadata(videoId)
         }?.also { store.cacheStreams(videoId, it) }
             // Transport/ambiguous fetch: never fabricate a 'not an album'
             // verdict from an all-defaults decode — the caller must retry.

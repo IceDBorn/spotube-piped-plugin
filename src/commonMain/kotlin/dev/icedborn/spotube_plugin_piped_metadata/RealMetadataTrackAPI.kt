@@ -17,7 +17,7 @@ internal class RealMetadataTrackAPI(
 
     override suspend fun getTrack(id: String): MetadataTrack {
         store.cachedTrack(id)?.let { return it }
-        val info = store.cachedStreams(id) ?: client.streams(id)
+        val info = store.cachedStreams(id) ?: client.streamsForMetadata(id)
             ?.also { store.cacheStreams(id, it) }
             ?: throw IllegalStateException("streams fetch failed for $id")
         val track = info.toTrack(id)
@@ -109,7 +109,7 @@ internal class RealMetadataTrackAPI(
 
     /** The seed artist's catalog from a music_songs search; YTM-only. */
     private suspend fun ytmCatalogTracks(seedVideoId: String): List<MetadataTrack> {
-        val info = store.cachedStreams(seedVideoId) ?: client.streams(seedVideoId)
+        val info = store.cachedStreams(seedVideoId) ?: client.streamsForMetadata(seedVideoId)
             ?.also { store.cacheStreams(seedVideoId, it) }
             ?: throw IllegalStateException("streams fetch failed for $seedVideoId")
         val artist = cleanArtistName(info.uploader)

@@ -269,7 +269,7 @@ internal class RealMetadataPlaylistAPI(
     private suspend fun resolveLocalTrack(id: String): MetadataTrack? = trackSemaphore.withPermit {
         runCatching {
             store.cachedTrack(id)?.let { return@withPermit it }
-            val info = store.cachedStreams(id) ?: client.streams(id)
+            val info = store.cachedStreams(id) ?: client.streamsForMetadata(id)
                 ?.also { store.cacheStreams(id, it) }
                 ?: throw IllegalStateException("streams fetch failed for $id")
             val track = info.toTrack(id)

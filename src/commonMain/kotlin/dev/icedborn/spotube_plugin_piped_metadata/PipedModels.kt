@@ -55,6 +55,18 @@ data class PipedStreamsInfo(
     val uploaderAvatar: String? = null,
     val thumbnailUrl: String? = null,
     val relatedStreams: List<PipedSearchItem> = emptyList(),
+    // Audio-only; metadata never reads it. Metadata gates on relatedStreams, audio on this (round-108).
+    val audioStreams: List<PipedAudioStream> = emptyList(),
+)
+
+@Serializable
+data class PipedAudioStream(
+    val url: String = "",
+    val format: String = "",
+    val quality: String = "",
+    val mimeType: String = "",
+    val itag: Int = -1,
+    val bitrate: Int = -1,
 )
 
 /** A YouTube playlist page; YouTube Music albums arrive as OLAK5uy_* playlists. */

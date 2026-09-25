@@ -1,6 +1,8 @@
 package dev.icedborn.spotube_plugin_piped
 
 import kotlin.coroutines.cancellation.CancellationException
+import dev.icedborn.spotube_plugin_piped_metadata.PipedAudioStream
+import dev.icedborn.spotube_plugin_piped_metadata.PipedSearchItem
 import dev.krtirtho.plugin_interfaces.extras.logger.Logger
 import dev.krtirtho.plugin_interfaces.plugin_apis.audio.AudioAPI
 import dev.krtirtho.plugin_interfaces.plugin_apis.audio.AudioFormat
@@ -17,7 +19,7 @@ private const val PLAYABLE_CONFIDENCE = 0.8f
 private val YOUTUBE_ID_REGEX = Regex("[A-Za-z0-9_-]{11}")
 
 class RealPipedAudioAPI(
-    private val client: PipedClient,
+    private val client: AudioPipedClient,
     // Called for every track the host asks audio for; the metadata side logs it as a play.
     private val onTrackRequested: suspend (MetadataTrack) -> Unit = {},
 ) : AudioAPI {

@@ -66,7 +66,7 @@ class PipedClientTest {
     @Test
     fun `streams decodes a keyed body`() = runTest {
         val http = FakeHttp().apply { onPath("/streams/", body = Fixtures.streams) }
-        val info = assertNotNull(client(http).streams("s00000000"))
+        val info = assertNotNull(client(http).streamsForMetadata("s00000000"))
         assertEquals("Alpha Song", info.title)
         assertEquals(1, info.relatedStreams.size)
     }
@@ -74,19 +74,33 @@ class PipedClientTest {
     @Test
     fun `streams returns null without a relatedStreams array`() = runTest {
         val http = FakeHttp().apply { onPath("/streams/", body = """{"audioStreams":[]}""") }
-        assertNull(client(http).streams("s00000000"))
+        assertNull(client(http).streamsForMetadata("s00000000"))
     }
 
     @Test
     fun `streams returns an empty page for a keyed empty array`() = runTest {
         val http = FakeHttp().apply { onPath("/streams/", body = """{"relatedStreams":[]}""") }
-        assertNotNull(client(http).streams("s00000000"))
+        assertNotNull(client(http).streamsForMetadata("s00000000"))
     }
 
     @Test
     fun `streams throws on a non-2xx status`() = runTest {
         val http = FakeHttp().apply { onPath("/streams/", status = 503, body = "") }
-        assertFailsWith<IllegalStateException> { client(http).streams("s00000000") }
+        assertFailsWith<IllegalStateException> { client(http).streamsForMetadata("s00000000") }
+    }
+
+    @Test
+    fun `streamsForAudio gates on audioStreams, not relatedStreams`() = runTest {
+        // Audio reads audioStreams, so a stripped related list must still decode (round-108).
+        val http = FakeHttp().apply { onPath("/streams/", body = Fixtures.streams) }
+        val info = assertNotNull(client(http).streamsForAudio("s00000000"))
+        assertEquals(1, info.audioStreams.size)
+    }
+
+    @Test
+    fun `streamsForAudio returns null without an audioStreams array`() = runTest {
+        val http = FakeHttp().apply { onPath("/streams/", body = """{"relatedStreams":[]}""") }
+        assertNull(client(http).streamsForAudio("s00000000"))
     }
 
     @Test

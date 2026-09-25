@@ -158,9 +158,13 @@ class EntityStore(private val storage: PersistedStorageAPI) {
 
     suspend fun cachedStreams(id: String): PipedStreamsInfo? = getDecoded(STREAMS_KEY + id, PipedStreamsInfo.serializer())
 
-    // relatedStreams (about 20 rows) is never read back from this cache.
+    // relatedStreams (about 20 rows) and audioStreams are never read back from this cache, and the
+    // signed audio URLs expire within hours, so neither belongs in stored rows.
     suspend fun cacheStreams(id: String, info: PipedStreamsInfo) {
-        put(STREAMS_KEY + id, json.encodeToJsonElement(info.copy(relatedStreams = emptyList())))
+        put(
+            STREAMS_KEY + id,
+            json.encodeToJsonElement(info.copy(relatedStreams = emptyList(), audioStreams = emptyList())),
+        )
     }
 
     /** Album id resolved for a track id; "none" marks a failed lookup so it is not retried. */

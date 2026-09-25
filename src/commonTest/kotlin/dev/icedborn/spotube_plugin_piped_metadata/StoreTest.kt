@@ -104,8 +104,9 @@ class StoreTest {
         store.cacheStreams("s00000000", info)
         val cached = assertNotNull(store.cachedStreams("s00000000"))
         assertEquals(info.title, cached.title)
-        // relatedStreams is never read back, so it is dropped on write.
+        // Neither list is read back, so both are dropped on write; the audio URLs also expire.
         assertTrue(cached.relatedStreams.isEmpty())
+        assertTrue(cached.audioStreams.isEmpty(), "audioStreams leaked into the cache: ${cached.audioStreams.size}")
     }
 
     @Test
