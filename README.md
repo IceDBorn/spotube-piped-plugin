@@ -100,6 +100,10 @@ passwords.
 
 ## Known limitations
 
-- Spotube has a Region setting (Settings -> Language & Region), but the host does not pass it to plugins yet.
+- Spotube Nightly has a Region setting (Settings -> Language & Region), but the host does not pass it to plugins yet.
+- Spotube Nightly does not ask plugins for updates yet, so the update channel has no effect and no update is offered in the
+  app. To update, install from one of these URLs again:
+  - stable: `https://github.com/IceDBorn/spotube-piped-plugin/releases/latest/download/spotube-plugin-piped.smplug`
+  - nightly: `https://github.com/IceDBorn/spotube-piped-plugin/releases/download/nightly/spotube-plugin-piped.smplug`
 - Piped has no related-artists endpoint. Artist pages show no related artists, and the Home "Fans also like" section
   is built from the artists in radio mixes.
