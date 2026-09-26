@@ -127,6 +127,9 @@ passwords.
 ## Known limitations
 
 - Spotube Nightly has a Region setting (Settings -> Language & Region), but it does not pass it to plugins yet.
+- Spotube Nightly does not pass its theme colors to plugins, so the settings form cannot follow the app theme. The
+  form has its own light/dark toggle, remembered between openings, and does not switch itself when you change the
+  theme in Spotube.
 - Spotube Nightly has no settings button for plugins yet, only Login and Logout. The plugin opens its settings
   form from that button, so while an account is signed in, the button reads Logout but opens the settings. To
   sign out, press **Log out** on the Login tab. Spotube Nightly also clears the plugin's web view data on every
