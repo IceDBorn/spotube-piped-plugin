@@ -8,6 +8,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # gh workflow run at the end needs this to dispatch the nightly refresh.
+      actions: write
     steps:
       # Tags and full history, so the notes step can diff against the last stable release.
       - uses: actions/checkout@v7
@@ -33,9 +35,7 @@ jobs:
       - name: Release notes
         env:
           VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          prev=$(git describe --tags --abbrev=0 --exclude nightly --exclude "$VERSION" HEAD 2>/dev/null || true)
-          git log --no-merges --format='- %s (%h)' ${prev:+$prev..}HEAD > notes.md
+        run: .github/scripts/release-notes.sh stable "$VERSION" > notes.md
 
       - name: Prepare asset
         run: cp build/distributions/plugin-production.smplug spotube-plugin-piped.smplug
@@ -46,3 +46,10 @@ jobs:
           body_path: notes.md
           files: spotube-plugin-piped.smplug
           fail_on_unmatched_files: true
+
+      # The bump push already built a nightly against the old stable tag. Rebuild it now
+      # that this tag exists, so the nightly body matches what it ships.
+      - name: Refresh nightly
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run nightly.yml --ref main
