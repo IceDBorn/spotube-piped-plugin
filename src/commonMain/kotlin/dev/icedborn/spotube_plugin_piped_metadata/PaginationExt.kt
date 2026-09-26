@@ -49,3 +49,14 @@ internal fun <T> distinctWindow(rows: List<T>, offset: Int, window: List<T>, id:
 
 internal fun <T> emptyPagination(): PaginationResult<T> =
     PaginationResult(emptyList(), 0, null)
+
+/** One fixed-window page of an in-memory list: the window by offset, the total from the full list. */
+internal fun <T> List<T>.offsetPage(paging: PaginationStrategy.Offset): PaginationResult<T> = PaginationResult(
+    items = drop(paging.offset).take(paging.limit),
+    totalCount = size,
+    nextPagination = if (paging.offset + paging.limit < size) {
+        PaginationStrategy.Offset(paging.offset + paging.limit, paging.limit)
+    } else {
+        null
+    },
+)

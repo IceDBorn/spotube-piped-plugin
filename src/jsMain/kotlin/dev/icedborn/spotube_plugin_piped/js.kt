@@ -8,6 +8,7 @@ import dev.icedborn.spotube_plugin_piped_metadata.AlbumLookup
 import dev.icedborn.spotube_plugin_piped_metadata.Charts
 import dev.icedborn.spotube_plugin_piped_metadata.EntityStore
 import dev.icedborn.spotube_plugin_piped_metadata.InstanceSource
+import dev.icedborn.spotube_plugin_piped_metadata.LibraryPlaylistSetting
 import dev.icedborn.spotube_plugin_piped_metadata.LocalLibrary
 import dev.icedborn.spotube_plugin_piped_metadata.PipedClient
 import dev.icedborn.spotube_plugin_piped_metadata.PipedSavedLibrary
@@ -85,6 +86,7 @@ fun main() {
         val systemInfo = runCatching { zipline.take<SystemInformationAPI>(SystemInformationAPI_SERVICE_NAME) }.getOrNull()
         val region = RegionSetting(store, systemInfo)
         val updateChannel = UpdateChannelSetting(store)
+        val libraryPlaylist = LibraryPlaylistSetting(store)
         val history = PlayHistory(store)
         val core = RealCoreAPI(
             httpClient = httpClient,
@@ -101,7 +103,9 @@ fun main() {
         val artistApi = RealMetadataArtistAPI(client, store, library, mirror) { seeds ->
             trackApi.recommendationsBasedOnTracks(seeds, 50)
         }
-        val playlistApi = RealMetadataPlaylistAPI(client, store, library, mirror)
+        val playlistApi = RealMetadataPlaylistAPI(
+            client, store, library, mirror, history, libraryPlaylist,
+        )
 
         zipline.bind<CoreAPI>(CoreAPI_SERVICE_NAME, core)
         zipline.bind<AudioAPI>(

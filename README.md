@@ -110,3 +110,8 @@ passwords.
 - Spotube Nightly on Android shows no play or add-to-queue buttons on Home sections made of tracks, such as
   "Recently played" and "Because you listened to", so those tracks cannot be played from Home there. Desktop shows
   the buttons.
+- Spotube Nightly shows its "Liked tracks" card in Library -> Playlists only when the plugin returns at least one
+  playlist. To keep the card reachable, the plugin adds a generated "Recently played" playlist, holding the last 50
+  tracks you played. With no history yet it lists your saved tracks instead, and the Library playlist setting
+  changes that: *Only when there are no playlists* matches today's behaviour, and *Off* removes it, which also hides
+  the Liked Tracks card when no other playlist exists. The entry cannot be edited or deleted.

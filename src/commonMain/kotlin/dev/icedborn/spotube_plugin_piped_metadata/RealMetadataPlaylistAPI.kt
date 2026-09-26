@@ -2,6 +2,7 @@ package dev.icedborn.spotube_plugin_piped_metadata
 
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationResult
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
+import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.Thumbnail
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.playlist.MetadataPlaylist
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.playlist.MetadataPlaylistAPI
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
@@ -10,17 +11,23 @@ import kotlinx.coroutines.sync.withPermit
 
 /** Real playlists come from Piped; created playlists and the saved list live in plugin storage — Piped has no
  * public playlist API. */
-private const val LIKED_SONGS_ID = "piped-liked-songs"
-
 internal class RealMetadataPlaylistAPI(
     private val client: PipedClient,
     private val store: EntityStore,
     private val library: LocalLibrary,
     private val mirror: PipedSavedLibrary,
+    private val history: PlayHistory,
+    private val libraryPlaylist: LibraryPlaylistSetting,
 ) : MetadataPlaylistAPI {
 
-    override suspend fun getPlaylist(id: String): MetadataPlaylist {
-        if (id == LIKED_SONGS_ID) return likedSongsPlaylist()
+    override suspend fun getPlaylist(id: String): MetadataPlaylist = when (id) {
+        // Both synthetic ids resolve whatever the setting says, so an open page survives a setting change.
+        RECENTLY_PLAYED_ID -> recentlyPlayedPlaylist() ?: syntheticEntity(id)
+        LIKED_SONGS_ID -> likedSongsPlaylist() ?: syntheticEntity(id)
+        else -> storedPlaylist(id)
+    }
+
+    private suspend fun storedPlaylist(id: String): MetadataPlaylist {
         storedLocalPlaylist(id)?.let { return it.toEntity() }
         mirror.accountPlaylist(id)?.let { return it.toEntity() }
         val cached = store.cachedAlbumPlaylist(id)
@@ -53,6 +60,7 @@ internal class RealMetadataPlaylistAPI(
         pagination: PaginationStrategy?,
     ): PaginationResult<MetadataTrack> {
         val paging = pagination.getOffsetOrDefault()
+        if (id == RECENTLY_PLAYED_ID) return recentlyPlayedTracks(paging)
         if (id == LIKED_SONGS_ID) return likedSongsTracks(paging)
         storedLocalPlaylist(id)?.let { record ->
             return localTracksPage(record, paging)
@@ -80,19 +88,15 @@ internal class RealMetadataPlaylistAPI(
         val known = (created + account).distinctBy { it.id }
         val knownIds = known.map { it.id }.toHashSet()
         // Bookmarks come last, so only the ones inside the requested window are fetched.
-        val bookmarkIds = library.savedPlaylists().filterNot { it in knownIds }.distinct()
+        // An older build stored the Liked Songs id as a bookmark, and that entry has no title or cover.
+        val bookmarkIds = library.savedPlaylists().filterNot { it in knownIds || isSynthetic(it) }.distinct()
         val total = known.size + bookmarkIds.size
-        if (total == 0 && mirror.allSavedTrackIds().isNotEmpty()) {
-            // The host only shows its "Liked Tracks" card when the playlist list is non-empty, so keep the tab
-            // usable with a synthetic saved-tracks playlist instead of an empty state.
-            val liked = runCatching { likedSongsPlaylist() }.getOrNull()
-            if (liked != null) {
-                return PaginationResult(
-                    items = listOf(liked),
-                    totalCount = 1,
-                    nextPagination = null,
-                )
-            }
+        // The synthetic item goes in front of page 0 only, and total/next stay computed from the real list,
+        // so the offsets of later pages do not shift.
+        val synthetic = when (libraryPlaylist.stored()) {
+            LibraryPlaylist.ALWAYS -> if (paging.offset == 0) runCatching { syntheticPlaylist() }.getOrNull() else null
+            LibraryPlaylist.WHEN_EMPTY -> if (total == 0) runCatching { syntheticPlaylist() }.getOrNull() else null
+            LibraryPlaylist.OFF -> null
         }
         val start = minOf(paging.offset, total)
         val end = minOf(paging.offset + paging.limit, total)
@@ -101,8 +105,8 @@ internal class RealMetadataPlaylistAPI(
             (start - known.size).coerceIn(0, bookmarkIds.size),
             (end - known.size).coerceIn(0, bookmarkIds.size),
         )
-        val fetched = bookmarkSlice.mapConcurrently { id -> runCatching { getPlaylist(id) }.getOrNull() }.filterNotNull()
-        val slice = knownSlice + fetched
+        val fetched = bookmarkSlice.mapConcurrently { id -> runCatching { storedPlaylist(id) }.getOrNull() }.filterNotNull()
+        val slice = listOfNotNull(synthetic) + knownSlice + fetched
         return PaginationResult(
             items = slice,
             totalCount = total,
@@ -115,42 +119,85 @@ internal class RealMetadataPlaylistAPI(
         )
     }
 
-    /** Synthetic saved-tracks playlist; keeps the Playlists tab non-empty. */
-    private suspend fun likedSongsPlaylist(): MetadataPlaylist {
-        val count = mirror.allSavedTrackIds().size
+    /** The generated entity for a synthetic id, without a saved-track cover probe. */
+    private suspend fun syntheticEntity(id: String): MetadataPlaylist = when (id) {
+        RECENTLY_PLAYED_ID -> recentlyPlayedPlaylist() ?: emptyEntity(id, "Recently played")
+        else -> likedSongsPlaylist(withCover = false) ?: emptyEntity(id, "Liked Songs")
+    }
+
+    private fun emptyEntity(id: String, title: String) = MetadataPlaylist(
+        id = id,
+        title = title,
+        description = null,
+        thumbnails = emptyList(),
+        trackCount = 0,
+        externalUri = null,
+        owner = null,
+    )
+
+    /** The item [savedPlaylists] shows when the setting asks for one. */
+    private suspend fun syntheticPlaylist(): MetadataPlaylist? = recentlyPlayedPlaylist() ?: likedSongsPlaylist()
+
+    private suspend fun recentlyPlayedPlaylist(): MetadataPlaylist? {
+        val recent = history.recentTracks(RECENT_LIMIT)
+        if (recent.isEmpty()) return null
         return MetadataPlaylist(
-            id = LIKED_SONGS_ID,
-            title = "Liked Songs",
-            description = "Your saved tracks",
-            thumbnails = emptyList(),
-            trackCount = count,
+            id = RECENTLY_PLAYED_ID,
+            title = "Recently played",
+            description = "Last $RECENT_LIMIT tracks you played",
+            thumbnails = coverOf(recent),
+            trackCount = recent.size,
             externalUri = null,
             owner = null,
         )
     }
 
+    /** Synthetic saved-tracks playlist; keeps the Playlists tab non-empty. [withCover] is off for a write on a
+     * generated id, which returns the entity without resolving anything. */
+    private suspend fun likedSongsPlaylist(withCover: Boolean = true): MetadataPlaylist? {
+        val ids = mirror.allSavedTrackIds()
+        if (ids.isEmpty()) return null
+        return MetadataPlaylist(
+            id = LIKED_SONGS_ID,
+            title = "Liked Songs",
+            description = "Saved tracks. Create a playlist to hide this.",
+            thumbnails = if (withCover) coverOfSavedTrack(ids) else emptyList(),
+            trackCount = ids.size,
+            externalUri = null,
+            owner = null,
+        )
+    }
+
+    /** Cover of the first saved track that resolves; an empty list is what makes the current card look broken. */
+    private suspend fun coverOfSavedTrack(ids: List<String>): List<Thumbnail> =
+        coverOf(ids.take(COVER_PROBE_LIMIT).mapConcurrently { resolveLocalTrack(it) }.filterNotNull())
+
+    private fun coverOf(tracks: List<MetadataTrack>): List<Thumbnail> =
+        tracks.firstNotNullOfOrNull { it.album?.thumbnails?.firstOrNull() ?: it.thumbnails?.firstOrNull() }
+            ?.let(::listOf)
+            .orEmpty()
+
+    private suspend fun recentlyPlayedTracks(paging: PaginationStrategy.Offset): PaginationResult<MetadataTrack> {
+        // History rows are full tracks, so the page needs no fetch.
+        return history.recentTracks(RECENT_LIMIT).offsetPage(paging)
+    }
+
     private suspend fun likedSongsTracks(paging: PaginationStrategy.Offset): PaginationResult<MetadataTrack> {
         val ids = mirror.allSavedTrackIds()
-        val slice = ids.drop(paging.offset).take(paging.limit)
         // Same cachedTrack -> cachedStreams -> client.streams chain as resolveLocalTrack, so cached streams
         // (AlbumLookup / artistChannelOf writes) are served offline instead of dropped rows.
-        val items = slice.mapConcurrently { resolveLocalTrack(it) }.filterNotNull()
         // ids come from the authoritative LOCAL saved set (exact count): page by the fixed limit so a dead-id run
         // never truncates the pager at one window and hides the valid tail. The slice guard belongs to account lists.
-        return PaginationResult(
-            items = items,
-            totalCount = ids.size,
-            nextPagination = if (paging.offset + paging.limit < ids.size) {
-                PaginationStrategy.Offset(paging.offset + paging.limit, paging.limit)
-            } else {
-                null
-            },
-        )
+        return ids.drop(paging.offset).take(paging.limit)
+            .mapConcurrently { resolveLocalTrack(it) }
+            .filterNotNull()
+            .let { window -> PaginationResult(window, ids.size, ids.offsetPage(paging).nextPagination) }
     }
 
     override suspend fun isSavedPlaylists(ids: List<String>): List<Boolean> = library.isSavedPlaylists(ids)
 
-    override suspend fun savePlaylists(ids: List<String>) = library.savePlaylists(ids)
+    /** A synthetic id is generated, so it is never stored as a bookmark. */
+    override suspend fun savePlaylists(ids: List<String>) = library.savePlaylists(ids.filterNot(::isSynthetic))
 
     override suspend fun removeSavedPlaylists(ids: List<String>) = library.removePlaylists(ids)
 
@@ -188,6 +235,8 @@ internal class RealMetadataPlaylistAPI(
         imageBase64: String?,
         trackIds: List<String>?,
     ): MetadataPlaylist {
+        // Nothing to write: return the generated entity as it stands.
+        if (isSynthetic(id)) return syntheticEntity(id)
         val existing = storedLocalPlaylist(id)
             ?: throw IllegalStateException("Only locally created playlists can be edited: $id")
         val updated = existing.copy(
@@ -217,6 +266,8 @@ internal class RealMetadataPlaylistAPI(
     }
 
     override suspend fun deletePlaylist(id: String) {
+        // A synthetic id has no mirror and no stored record, so a delete must not reach the mirror at all.
+        if (isSynthetic(id)) return
         // Fail-soft like save(): keep the local playlist + binding when the remote mirror could not be deleted, so
         // the retry re-attempts it (a local removal with a surviving mirror orphans the playlist).
         if (!mirror.mirrorDeletePlaylist(id)) return
@@ -226,8 +277,7 @@ internal class RealMetadataPlaylistAPI(
 
     override suspend fun addTracksToPlaylist(playlistId: String, trackIds: List<String>) {
         if (trackIds.isEmpty()) return
-        val existing = storedLocalPlaylist(playlistId)
-            ?: throw IllegalStateException("Only locally created playlists can be edited: $playlistId")
+        val existing = storedLocalPlaylist(playlistId) ?: throw notEditable(playlistId)
         val updated = existing.copy(trackIds = (existing.trackIds + trackIds).distinct())
         // Remote FIRST, then local commit (fail-soft like updatePlaylist): committing first applies the edit while
         // the mirror stays old on a transient failure, with nothing reconciling it; failure keeps the record OLD.
@@ -237,8 +287,7 @@ internal class RealMetadataPlaylistAPI(
 
     override suspend fun removeTracksFromPlaylist(playlistId: String, trackIds: List<String>) {
         if (trackIds.isEmpty()) return
-        val existing = storedLocalPlaylist(playlistId)
-            ?: throw IllegalStateException("Only locally created playlists can be edited: $playlistId")
+        val existing = storedLocalPlaylist(playlistId) ?: throw notEditable(playlistId)
         val updated = existing.copy(trackIds = existing.trackIds.filterNot { it in trackIds })
         // Remote FIRST, then local commit (same discipline as addTracks/updatePlaylist): a failed remove leaves the
         // ghost row in the mirror; committing first diverges with no re-sync. Failure keeps the OLD record listed.
@@ -300,8 +349,18 @@ internal class RealMetadataPlaylistAPI(
         )
     }
 
+    private fun notEditable(id: String): IllegalStateException = if (isSynthetic(id)) {
+        IllegalStateException("${syntheticOrigin(id)} and cannot be edited")
+    } else {
+        IllegalStateException("Only locally created playlists can be edited: $id")
+    }
+
     companion object {
         private val trackSemaphore = Semaphore(4)
+        private const val RECENT_LIMIT = 50
+
+        /** How many saved ids a cover probe resolves before giving up. */
+        private const val COVER_PROBE_LIMIT = 5
 
         private fun newLocalId(name: String): String {
             val base = (name.hashCode() and 0x7FFFFFFF).toString(36)
