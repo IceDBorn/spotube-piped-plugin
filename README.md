@@ -112,6 +112,12 @@ passwords.
 ## Known limitations
 
 - Spotube Nightly has a Region setting (Settings -> Language & Region), but the host does not pass it to plugins yet.
+- Spotube Nightly has no settings button for plugins yet, only Login and Logout. The plugin opens its settings
+  form from that button, so while an account is signed in, the button reads Logout but opens the settings. To
+  sign out, press **Log out** on the Login tab. The host also clears the plugin's web view data on every press,
+  which does not affect the Piped session.
+- Spotube Nightly does not send scrobbles to plugins yet, so selecting Piped as the scrobble plugin has no effect.
+  Play history keeps coming from the tracks the plugin resolves audio for, see [Features](#features).
 - Spotube Nightly does not ask plugins for updates yet, so the update channel has no effect and no update is offered in the
   app. To update, install from one of these URLs again:
   - stable: `https://github.com/IceDBorn/spotube-piped-plugin/releases/latest/download/spotube-plugin-piped.smplug`
