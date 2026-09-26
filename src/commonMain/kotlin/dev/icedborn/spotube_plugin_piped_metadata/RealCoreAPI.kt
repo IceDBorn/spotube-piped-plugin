@@ -35,7 +35,14 @@ private const val FORM_THEME_KEY = "piped.form.theme"
 /** How long the "instance saved" confirmation stays up before the form closes. */
 private const val FORM_CLOSE_GRACE_MS = 800L
 
-private enum class SettingsFormResult { LoggedIn, InstanceOnly }
+/** The host runs clearData next to logout(); the form must not be shown before it lands. */
+private const val CLEAR_DATA_SETTLE_MS = 500L
+
+/** Sentinel the form loop gets when the web view refused to open. Not valid JSON, so it never parses. */
+private const val FORM_OPEN_FAILED = "\u0000form-open-failed"
+
+/** [Closed] is the Done button: the form ends with nothing changed. [LoggedOut] is the Log out button. */
+private enum class SettingsFormResult { LoggedIn, InstanceOnly, Closed, LoggedOut }
 
 private val coreLog = Logger("PipedCore")
 
@@ -52,9 +59,11 @@ class RealCoreAPI(
     private val libraryPlaylist: LibraryPlaylistSetting? = null,
     private val onLogin: suspend () -> Unit = {},
     private val updateChecker: UpdateChecker = UpdateChecker(httpClient, channel),
+    // Injectable so a test can run the form loop on its own dispatcher instead of Dispatchers.Main.
+    coroutineScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main),
 ) : CoreAPI {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val scope = coroutineScope
     private val loggedInStateFlow = MutableStateFlow(false)
 
     override val requiresAuthentication: Boolean = true
@@ -88,6 +97,7 @@ class RealCoreAPI(
                 instanceSource.api().orEmpty(),
                 instanceSource.playback().orEmpty(),
                 existing?.username.orEmpty(),
+                signedIn = existing,
             )) {
                 SettingsFormResult.LoggedIn -> {
                     val account = session.load() ?: throw IllegalStateException("Piped login failed")
@@ -95,9 +105,13 @@ class RealCoreAPI(
                     loggedInStateFlow.value = true
                     onLogin()
                 }
-                // Account-less setup: drop an existing session when the instance changed — a session is only
-                // valid on the instance it was created on.
-                SettingsFormResult.InstanceOnly -> {
+                SettingsFormResult.LoggedOut -> {
+                    session.clear()
+                    coreLog.i { "signed out from the settings form" }
+                }
+                // Account-less setup, or Done: drop an existing session when the instance changed — a session is
+                // only valid on the instance it was created on.
+                SettingsFormResult.InstanceOnly, SettingsFormResult.Closed -> {
                     var loggedIn = false
                     val saved = session.load()
                     if (saved != null) {
@@ -131,8 +145,49 @@ class RealCoreAPI(
     }
 
     override suspend fun logout() {
-        session.clear()
-        loggedInStateFlow.value = false
+        val account = session.load()
+        if (account == null) {
+            session.clear()
+            loggedInStateFlow.value = false
+            return
+        }
+        // The host runs clearData next to logout(), and that nulls the page, so wait past it before the form.
+        delay(CLEAR_DATA_SETTLE_MS)
+        val result = try {
+            showSettingsForm(
+                instance = instanceSource.api() ?: account.instance,
+                playback = instanceSource.playback().orEmpty(),
+                username = account.username,
+                manage = true,
+                signedIn = account,
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // A closed window must not cost the user their session.
+            coreLog.w { "the logout form did not finish, kept the session: ${e.message}" }
+            SettingsFormResult.Closed
+        } finally {
+            webView.exitWebView()
+        }
+        loggedInStateFlow.value = endLogoutForm(account, result)
+    }
+
+    /** Only an explicit Log out, or an instance change, ends the session. */
+    private suspend fun endLogoutForm(account: PipedAccount, result: SettingsFormResult): Boolean = when (result) {
+        SettingsFormResult.LoggedOut -> {
+            session.clear()
+            false
+        }
+        // Done, and anything else the manage form can return: a sign-in or a skip there can only be a replayed
+        // message. An instance change already cleared the session in saveInstance.
+        else -> sessionStillThere(account)
+    }
+
+    private suspend fun sessionStillThere(account: PipedAccount): Boolean {
+        val kept = session.load() != null
+        if (!kept) coreLog.w { "the logout form found no session left for ${account.username}; staying logged out" }
+        return kept
     }
 
     /** True when [account]'s token still answers the authenticated listing. A revoked/expired token yields a
@@ -170,25 +225,49 @@ class RealCoreAPI(
         return true
     }
 
-    private suspend fun showSettingsForm(instance: String, playback: String, username: String): SettingsFormResult {
+    private suspend fun showSettingsForm(
+        instance: String,
+        playback: String,
+        username: String,
+        manage: Boolean = false,
+        signedIn: PipedAccount? = null,
+    ): SettingsFormResult {
         // UNLIMITED: a theme toggle posted mid-login must not replace the queued login message.
         val messages = Channel<String>(Channel.UNLIMITED)
+        // A new subscriber first receives the last message of the previous form; the nonce drops that replay.
+        val nonce = randomFormNonce()
         val subscriber = scope.launch {
-            webView.postMessagesFlow().onEach { messages.trySend(it) }.launchIn(this)
-            val lightTheme = runCatching { storage.getString(FORM_THEME_KEY) }.getOrNull() == "light"
-            val html = settingsFormHtml(
-                instance, playback, username, lightTheme,
-                region.stored(), region.detected(),
-                channel?.stored()?.name ?: UpdateChannel.AUTO.name,
-                library = libraryPlaylist?.stored()?.name ?: LibraryPlaylist.ALWAYS.name,
-            )
-            webView.navigateToHTML(html)
+            try {
+                webView.postMessagesFlow().onEach { messages.trySend(it) }.launchIn(this)
+                val lightTheme = runCatching { storage.getString(FORM_THEME_KEY) }.getOrNull() == "light"
+                val html = settingsFormHtml(
+                    instance, playback, username, lightTheme,
+                    region.stored(), region.detected(),
+                    channel?.stored()?.name ?: UpdateChannel.AUTO.name,
+                    library = libraryPlaylist?.stored()?.name ?: LibraryPlaylist.ALWAYS.name,
+                    nonce = nonce,
+                    manage = manage,
+                    signedInAs = signedIn?.username,
+                    signedInOn = signedIn?.instance,
+                )
+                webView.navigateToHTML(html)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // The host could not open the form. End the loop at once rather than wait out the timeout.
+                coreLog.w { "the settings form could not be shown: ${e.message}" }
+                messages.trySend(FORM_OPEN_FAILED)
+            }
         }
         try {
             while (true) {
                 val message = withTimeoutOrNull(FORM_WAIT_MS) { messages.receive() }
                     ?: throw IllegalStateException("the settings form was closed without saving")
+                if (message == FORM_OPEN_FAILED) {
+                    throw IllegalStateException("the settings form could not be shown")
+                }
                 val fields = runCatching { json.parseToJsonElement(message).jsonObject }.getOrNull() ?: continue
+                if (fields["nonce"]?.jsonPrimitive?.contentOrNull != nonce) continue
                 val action = fields["action"]?.jsonPrimitive?.contentOrNull
                 if (action == "region") {
                     runCatching { region.set(fields["region"]?.jsonPrimitive?.contentOrNull.orEmpty()) }
@@ -218,7 +297,20 @@ class RealCoreAPI(
                     continue
                 }
                 if (action == "instance") {
-                    saveInstance(fields)
+                    saveInstance(fields, manage)
+                    continue
+                }
+                if (action == "close") {
+                    delay(FORM_CLOSE_GRACE_MS)
+                    return SettingsFormResult.Closed
+                }
+                if (action == "logout") {
+                    delay(FORM_CLOSE_GRACE_MS)
+                    return SettingsFormResult.LoggedOut
+                }
+                if (manage) {
+                    // The manage form has no sign-in fields, so a login message can only be a replay.
+                    coreLog.w { "ignoring a $action message on the logout form" }
                     continue
                 }
                 val activeInstance = instanceSource.api()
@@ -282,7 +374,7 @@ class RealCoreAPI(
         runCatching { storage.putString(FORM_THEME_KEY, if (light) "light" else "dark") }
     }
 
-    private suspend fun saveInstance(fields: JsonObject) {
+    private suspend fun saveInstance(fields: JsonObject, manage: Boolean) {
         val entered = fields["instance"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
         if (entered.isEmpty()) {
             setFormStatus("Enter the URL of the Piped instance to use.")
@@ -294,11 +386,20 @@ class RealCoreAPI(
         // A session only works on the instance it was created on.
         val saved = session.load()
         if (saved != null && saved.instance.trim().trimEnd('/') != active) session.clear()
+        // The form shows who is signed in, so it has to learn that the save kept or dropped the session.
+        val sessionKept = session.load() != null
+        // The manage form has no sign-in fields, so it must not tell the user to sign in.
+        val text = if (manage) "Instance saved." else "Instance saved. Sign in, or continue without an account."
         val script = "if(window.onInstanceSaved){window.onInstanceSaved(" +
             "${json.encodeToString(active)}," +
-            "${json.encodeToString("Instance saved. Sign in, or continue without an account.")});}"
+            "${json.encodeToString(text)}," +
+            "$sessionKept);}"
         runCatching { webView.evaluateJavaScript(script) }
     }
+
+    /** A per-form id, so a replayed message from a previous form is ignored. */
+    private fun randomFormNonce(): String =
+        kotlin.random.Random.nextLong(0, Long.MAX_VALUE).toString(36)
 
     private fun fieldOr(fields: JsonObject, name: String, fallback: String): String =
         fields[name]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() } ?: fallback

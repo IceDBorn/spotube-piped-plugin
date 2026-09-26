@@ -42,6 +42,10 @@ The **Login** tab is optional. Sign in to, or register on, the instance. Saved t
 to the "Spotube - Favorites", "Spotube - Albums" and "Spotube - Artists" playlists on that account, and a copy stays
 on the device for offline use. Without an account, everything stays local.
 
+While an account is signed in, the host button on Piped reads Logout, and pressing it opens the same form on the
+Settings tab. The Login tab then shows who is signed in, with **Log out** and **Done**. Done closes the form and
+keeps the session.
+
 A session belongs to the instance it was created on. Changing the instance signs you out.
 
 ## Features

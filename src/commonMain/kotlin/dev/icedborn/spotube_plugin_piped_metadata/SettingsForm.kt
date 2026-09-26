@@ -1,6 +1,7 @@
 package dev.icedborn.spotube_plugin_piped_metadata
 
-/** Settings page shown in the plugin webview; posts JSON over the host bridge. */
+/** Settings page shown in the plugin webview; posts JSON over the host bridge.
+ * [manage] opens the same form from the host's logout button: signed in, no sign-in fields. */
 internal fun settingsFormHtml(
     instance: String,
     playback: String,
@@ -10,6 +11,10 @@ internal fun settingsFormHtml(
     detectedRegion: String?,
     channel: String,
     library: String = LibraryPlaylist.ALWAYS.name,
+    nonce: String = "",
+    manage: Boolean = false,
+    signedInAs: String? = null,
+    signedInOn: String? = null,
 ): String {
     val values = mapOf(
         "THEME" to if (lightTheme) "light" else "dark",
@@ -19,9 +24,17 @@ internal fun settingsFormHtml(
         "REGIONS" to regionOptions(region, detectedRegion),
         "CHANNELS" to channelOptions(channel),
         "LIBRARY" to libraryOptions(library),
+        "NONCE" to escapeAttribute(nonce),
+        "MANAGE" to if (manage) "true" else "false",
+        "SIGNEDIN" to signedInLine(signedInAs, signedInOn),
     )
     // One pass, so a value that contains a placeholder name is never substituted again.
     return PLACEHOLDER.replace(FORM_HTML) { values[it.groupValues[1]] ?: it.value }
+}
+
+private fun signedInLine(username: String?, instance: String?): String {
+    if (username.isNullOrBlank() || instance.isNullOrBlank()) return ""
+    return "Signed in as <strong>${escapeHtml(username)}</strong> on ${escapeHtml(instance)}"
 }
 
 private fun libraryOptions(selected: String): String = listOf(
@@ -55,6 +68,11 @@ private fun channelOptions(selected: String): String =
         "<option value=\"${channel.name}\"$mark>$label</option>"
     }
 
+private fun escapeHtml(value: String): String = value
+    .replace("&", "&amp;")
+    .replace("<", "&lt;")
+    .replace(">", "&gt;")
+
 private fun escapeAttribute(value: String): String = value
     .replace("&", "&amp;")
     .replace("\"", "&quot;")
@@ -62,7 +80,7 @@ private fun escapeAttribute(value: String): String = value
     .replace(">", "&gt;")
 
 private val FORM_HTML = """<!doctype html>
-<html lang="en" data-theme="__THEME__">
+<html lang="en" data-theme="__THEME__" data-manage="__MANAGE__">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -134,19 +152,24 @@ private val FORM_HTML = """<!doctype html>
     <div id="noInstance" class="notice" hidden>No Piped instance is set up. The plugin ships without a
       default instance, so choose one in <a href="#" id="goInstance">Instance</a> before signing in.</div>
     <p id="loginTarget" class="target" hidden>Signing in to <strong id="currentInstance"></strong></p>
+    <p id="signedIn" class="target" hidden>__SIGNEDIN__</p>
 
-    <label for="username">Username</label>
-    <input id="username" type="text" value="__USERNAME__" spellcheck="false">
+    <div id="signInFields">
+      <label for="username">Username</label>
+      <input id="username" type="text" value="__USERNAME__" spellcheck="false">
 
-    <label for="password">Password</label>
-    <input id="password" type="password" placeholder="your account password" spellcheck="false">
+      <label for="password">Password</label>
+      <input id="password" type="password" placeholder="your account password" spellcheck="false">
 
-    <label class="check"><input id="createAccount" type="checkbox" checked>
-      Create the account if it does not exist (instances may disable registration)</label>
+      <label class="check"><input id="createAccount" type="checkbox" checked>
+        Create the account if it does not exist (instances may disable registration)</label>
+    </div>
 
     <div class="row">
       <button id="login" class="primary action" type="submit">Sign in</button>
       <button id="skip" class="secondary action" type="button">Continue without account</button>
+      <button id="logOut" class="secondary action" type="button">Log out</button>
+      <button id="close" class="secondary action" type="button">Done</button>
     </div>
   </form>
 
@@ -164,6 +187,7 @@ private val FORM_HTML = """<!doctype html>
 
     <div class="row">
       <button id="saveInstance" class="primary action" type="submit">Save instance</button>
+      <button id="closeInstance" class="secondary action" type="button">Done</button>
     </div>
   </form>
 
@@ -185,6 +209,10 @@ private val FORM_HTML = """<!doctype html>
     <p class="hint">Spotube only shows its Liked Tracks card when the list has at least one playlist, so the
     plugin adds a generated one. Recently played lists the last 50 tracks; with no history yet it shows your
     saved tracks instead. Off removes it, and with no other playlist the Liked Tracks card disappears too.</p>
+
+    <div class="row">
+      <button id="closeSettings" class="secondary action" type="button">Done</button>
+    </div>
   </form>
 
   <p id="status"></p>
@@ -192,6 +220,10 @@ private val FORM_HTML = """<!doctype html>
 <script>
   function el(id) { return document.getElementById(id); }
   var savedInstance = el('instance').defaultValue.trim();
+  var manage = document.documentElement.dataset.manage === 'true';
+  var signedIn = el('signedIn').textContent.length > 0;
+  // The host replays the last message of a previous form to a new subscriber; the nonce drops it.
+  var nonce = '__NONCE__';
   function send(message) {
     if (typeof window.sendMessage === 'function') { window.sendMessage(message); return true; }
     if (window.kmpJsBridge && typeof window.kmpJsBridge.callNative === 'function') {
@@ -206,10 +238,15 @@ private val FORM_HTML = """<!doctype html>
   function refreshLogin() {
     var hasInstance = savedInstance.length > 0;
     el('noInstance').hidden = hasInstance;
-    el('loginTarget').hidden = !hasInstance;
+    el('loginTarget').hidden = !hasInstance || signedIn || manage;
     el('currentInstance').textContent = savedInstance;
+    // A session shows on both forms; the sign-in fields only on the login form, Log out only on the manage form.
+    el('signedIn').hidden = !signedIn;
+    el('signInFields').hidden = manage;
+    el('login').hidden = manage;
+    el('skip').hidden = !hasInstance || manage;
+    el('logOut').hidden = !manage;
     el('login').disabled = !hasInstance;
-    el('skip').hidden = !hasInstance;
   }
   // The host re-enables buttons through this after an error status.
   window.disableButtons = function (value) {
@@ -217,11 +254,16 @@ private val FORM_HTML = """<!doctype html>
     if (!value) refreshLogin();
   };
   // The host calls this once it has stored the instance.
-  window.onInstanceSaved = function (url, text) {
+  window.onInstanceSaved = function (url, text, sessionKept) {
     savedInstance = url;
+    // Saving another instance drops the session, so the Login tab must stop claiming one.
+    if (!sessionKept) {
+      signedIn = false;
+      el('signedIn').textContent = '';
+    }
     window.disableButtons(false);
     setStatus(text, false);
-    showTab('login');
+    showTab(manage ? 'settings' : 'login');
   };
   function showTab(name) {
     ['login', 'instance', 'settings'].forEach(function (tab) {
@@ -232,6 +274,7 @@ private val FORM_HTML = """<!doctype html>
   }
   // press is false for a change that saves itself, so no button is left disabled.
   function post(payload, busyText, press) {
+    payload.nonce = nonce;
     if (!send(JSON.stringify(payload))) {
       setStatus('The app bridge is not ready yet. Wait a moment, then press the button again.', true);
       return false;
@@ -273,6 +316,10 @@ private val FORM_HTML = """<!doctype html>
     }, 'Signing in...');
   });
   el('skip').addEventListener('click', function () { post({ action: 'skip' }, 'Closing...'); });
+  el('logOut').addEventListener('click', function () { post({ action: 'logout' }, 'Logging out...'); });
+  el('close').addEventListener('click', function () { post({ action: 'close' }, 'Closing...'); });
+  el('closeInstance').addEventListener('click', function () { post({ action: 'close' }, 'Closing...'); });
+  el('closeSettings').addEventListener('click', function () { post({ action: 'close' }, 'Closing...'); });
   el('paneInstance').addEventListener('submit', function (e) {
     e.preventDefault();
     post({ action: 'instance', instance: el('instance').value.trim(), playback: el('playback').value.trim() },
@@ -281,6 +328,6 @@ private val FORM_HTML = """<!doctype html>
   refreshTheme();
   refreshLogin();
   // Signing in is impossible without an instance, so that tab opens first.
-  showTab(savedInstance ? 'login' : 'instance');
+  showTab(manage ? 'settings' : (savedInstance ? 'login' : 'instance'));
 </script>
 """
