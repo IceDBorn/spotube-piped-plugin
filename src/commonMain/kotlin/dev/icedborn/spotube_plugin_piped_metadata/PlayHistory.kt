@@ -2,6 +2,8 @@ package dev.icedborn.spotube_plugin_piped_metadata
 
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.artist.MetadataArtist
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.encodeToJsonElement
@@ -26,15 +28,20 @@ class PlayHistory(private val store: EntityStore) {
     suspend fun all(): List<PlayedTrack> =
         store.getDecoded(HISTORY_KEY, ListSerializer(PlayedTrack.serializer())).orEmpty()
 
+    // Read-modify-write, so a scrobble landing while an audio resolve writes cannot drop either play.
+    private val writeLock = Mutex()
+
     suspend fun record(track: MetadataTrack) {
         if (track.id.isBlank()) return
-        val now = epochMillis()
-        val entries = all()
-        val previous = entries.firstOrNull { it.track.id == track.id }
-        if (previous != null && now - previous.lastPlayedAt < REPLAY_WINDOW_MS) return
-        val updated = PlayedTrack(track, (previous?.plays ?: 0) + 1, now)
-        val rest = entries.filterNot { it.track.id == track.id }
-        store.put(HISTORY_KEY, json.encodeToJsonElement((listOf(updated) + rest).take(HISTORY_LIMIT)))
+        writeLock.withLock {
+            val now = epochMillis()
+            val entries = all()
+            val previous = entries.firstOrNull { it.track.id == track.id }
+            if (previous != null && now - previous.lastPlayedAt < REPLAY_WINDOW_MS) return
+            val updated = PlayedTrack(track, (previous?.plays ?: 0) + 1, now)
+            val rest = entries.filterNot { it.track.id == track.id }
+            store.put(HISTORY_KEY, json.encodeToJsonElement((listOf(updated) + rest).take(HISTORY_LIMIT)))
+        }
     }
 
     /** Most recent first, one entry per track. */
