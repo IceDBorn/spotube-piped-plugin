@@ -17,23 +17,28 @@ To build from source:
 ## Setup
 
 There is no default instance. Open Settings -> Manage plugins, choose Piped as the metadata plugin, the audio plugin
-or both, then press the login button on Piped. The settings form has two tabs.
+or both, then press the login button on Piped. The settings form has three tabs: Login, Instance and Settings.
 
 The **Instance** tab:
 
 - **Instance**: the URL of any instance from the [TeamPiped list](https://github.com/TeamPiped/Piped/wiki/Instances),
   or your own.
 - **Playback instance** (optional): resolve audio from a different instance than the one serving metadata.
+
+The **Settings** tab:
+
 - **Charts region**: *Auto* guesses the country from the system time zone. Countries without charts use Global.
 - **Update channel**: which GitHub release the update check offers. *Auto* follows the installed build, so a
   nightly install stays on nightlies and a stable install stays on stable releases. *Stable* only ever looks at the
   latest release, *Nightly* at both and offers the newer of the two.
+- **Library playlist**: the playlist the plugin adds to Library -> Playlists. *Always show Recently played* is the
+  default, see [Known limitations](#known-limitations).
 
 After switching from Nightly to Stable, no update is offered until a stable release is newer than the installed
 nightly. To go back sooner, reinstall a stable build from the
 [Releases page](https://github.com/IceDBorn/spotube-piped-plugin/releases).
 
-The **Sign in** tab is optional. Sign in to, or register on, the instance. Saved tracks, albums and artists then sync
+The **Login** tab is optional. Sign in to, or register on, the instance. Saved tracks, albums and artists then sync
 to the "Spotube - Favorites", "Spotube - Albums" and "Spotube - Artists" playlists on that account, and a copy stays
 on the device for offline use. Without an account, everything stays local.
 

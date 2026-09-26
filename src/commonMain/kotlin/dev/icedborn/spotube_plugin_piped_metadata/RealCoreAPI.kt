@@ -49,6 +49,7 @@ class RealCoreAPI(
     private val instanceSource: InstanceSource,
     private val region: RegionSetting,
     private val channel: UpdateChannelSetting? = null,
+    private val libraryPlaylist: LibraryPlaylistSetting? = null,
     private val onLogin: suspend () -> Unit = {},
     private val updateChecker: UpdateChecker = UpdateChecker(httpClient, channel),
 ) : CoreAPI {
@@ -179,6 +180,7 @@ class RealCoreAPI(
                 instance, playback, username, lightTheme,
                 region.stored(), region.detected(),
                 channel?.stored()?.name ?: UpdateChannel.AUTO.name,
+                library = libraryPlaylist?.stored()?.name ?: LibraryPlaylist.ALWAYS.name,
             )
             webView.navigateToHTML(html)
         }
@@ -202,6 +204,13 @@ class RealCoreAPI(
                     }
                     // The cached result belongs to the old channel, so the next check has to ask again.
                     updateChecker.clearCache()
+                    continue
+                }
+                if (action == "library") {
+                    val name = fields["library"]?.jsonPrimitive?.contentOrNull
+                    val mode = LibraryPlaylist.entries.firstOrNull { it.name == name }
+                    if (mode != null) runCatching { libraryPlaylist?.set(mode) }
+                    else coreLog.w { "unknown library playlist setting: $name" }
                     continue
                 }
                 if (action == "theme") {

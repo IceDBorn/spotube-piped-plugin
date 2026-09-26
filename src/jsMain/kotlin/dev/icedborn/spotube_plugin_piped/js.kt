@@ -96,6 +96,7 @@ fun main() {
             instanceSource = instanceSource,
             region = region,
             channel = updateChannel,
+            libraryPlaylist = libraryPlaylist,
             onLogin = { mirror.refreshCache() },
         )
         val trackApi = RealMetadataTrackAPI(client, store, library, mirror)

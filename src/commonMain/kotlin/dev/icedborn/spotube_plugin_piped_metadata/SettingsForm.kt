@@ -9,6 +9,7 @@ internal fun settingsFormHtml(
     region: String,
     detectedRegion: String?,
     channel: String,
+    library: String = LibraryPlaylist.ALWAYS.name,
 ): String {
     val values = mapOf(
         "THEME" to if (lightTheme) "light" else "dark",
@@ -17,9 +18,19 @@ internal fun settingsFormHtml(
         "USERNAME" to escapeAttribute(username),
         "REGIONS" to regionOptions(region, detectedRegion),
         "CHANNELS" to channelOptions(channel),
+        "LIBRARY" to libraryOptions(library),
     )
     // One pass, so a value that contains a placeholder name is never substituted again.
     return PLACEHOLDER.replace(FORM_HTML) { values[it.groupValues[1]] ?: it.value }
+}
+
+private fun libraryOptions(selected: String): String = listOf(
+    LibraryPlaylist.ALWAYS to "Always show Recently played",
+    LibraryPlaylist.WHEN_EMPTY to "Only when there are no playlists",
+    LibraryPlaylist.OFF to "Off",
+).joinToString("") { (mode, label) ->
+    val mark = if (mode.name == selected) " selected" else ""
+    "<option value=\"${mode.name}\"$mark>$label</option>"
 }
 
 private val PLACEHOLDER = Regex("__([A-Z]+)__")
@@ -114,8 +125,9 @@ private val FORM_HTML = """<!doctype html>
   instance is optional and syncs saved albums, artists and favorites to it.</p>
 
   <div class="tabs" role="tablist">
-    <button id="tabLogin" class="tab" type="button" role="tab">Sign in</button>
+    <button id="tabLogin" class="tab" type="button" role="tab">Login</button>
     <button id="tabInstance" class="tab" type="button" role="tab">Instance</button>
+    <button id="tabSettings" class="tab" type="button" role="tab">Settings</button>
   </div>
 
   <form id="paneLogin" autocomplete="off">
@@ -153,7 +165,9 @@ private val FORM_HTML = """<!doctype html>
     <div class="row">
       <button id="saveInstance" class="primary action" type="submit">Save instance</button>
     </div>
+  </form>
 
+  <form id="paneSettings" autocomplete="off" hidden>
     <label for="region">Charts region</label>
     <select id="region">__REGIONS__</select>
     <p class="hint">Picks the YouTube Music charts on Home. Auto follows the system time zone, and countries
@@ -165,6 +179,12 @@ private val FORM_HTML = """<!doctype html>
     nightly install stays on nightlies. After switching from Nightly to Stable, no update is offered until a
     stable release is newer than the installed nightly. To go back sooner, reinstall a stable build from the
     Releases page.</p>
+
+    <label for="library">Library playlist</label>
+    <select id="library">__LIBRARY__</select>
+    <p class="hint">Spotube only shows its Liked Tracks card when the list has at least one playlist, so the
+    plugin adds a generated one. Recently played lists the last 50 tracks; with no history yet it shows your
+    saved tracks instead. Off removes it, and with no other playlist the Liked Tracks card disappears too.</p>
   </form>
 
   <p id="status"></p>
@@ -204,19 +224,21 @@ private val FORM_HTML = """<!doctype html>
     showTab('login');
   };
   function showTab(name) {
-    var login = name === 'login';
-    el('paneLogin').hidden = !login;
-    el('paneInstance').hidden = login;
-    el('tabLogin').setAttribute('aria-selected', String(login));
-    el('tabInstance').setAttribute('aria-selected', String(!login));
+    ['login', 'instance', 'settings'].forEach(function (tab) {
+      var on = tab === name;
+      el('pane' + tab[0].toUpperCase() + tab.slice(1)).hidden = !on;
+      el('tab' + tab[0].toUpperCase() + tab.slice(1)).setAttribute('aria-selected', String(on));
+    });
   }
-  function post(payload, busyText) {
+  // press is false for a change that saves itself, so no button is left disabled.
+  function post(payload, busyText, press) {
     if (!send(JSON.stringify(payload))) {
       setStatus('The app bridge is not ready yet. Wait a moment, then press the button again.', true);
-      return;
+      return false;
     }
-    window.disableButtons(true);
-    setStatus(busyText, false);
+    if (press !== false) window.disableButtons(true);
+    if (busyText) setStatus(busyText, false);
+    return true;
   }
   function refreshTheme() {
     var light = document.documentElement.dataset.theme === 'light';
@@ -226,18 +248,20 @@ private val FORM_HTML = """<!doctype html>
     var light = document.documentElement.dataset.theme !== 'light';
     document.documentElement.dataset.theme = light ? 'light' : 'dark';
     refreshTheme();
-    send(JSON.stringify({ action: 'theme', light: light }));
+    post({ action: 'theme', light: light }, '', false);
   });
   el('channel').addEventListener('change', function () {
-    send(JSON.stringify({ action: 'channel', channel: el('channel').value }));
-    setStatus('Update channel saved.', false);
+    post({ action: 'channel', channel: el('channel').value }, 'Saved.', false);
   });
   el('region').addEventListener('change', function () {
-    send(JSON.stringify({ action: 'region', region: el('region').value }));
-    setStatus('Region saved. Restart Spotube to refresh Home.', false);
+    post({ action: 'region', region: el('region').value }, 'Saved. Restart Spotube to refresh Home.', false);
+  });
+  el('library').addEventListener('change', function () {
+    post({ action: 'library', library: el('library').value }, 'Saved.', false);
   });
   el('tabLogin').addEventListener('click', function () { showTab('login'); });
   el('tabInstance').addEventListener('click', function () { showTab('instance'); });
+  el('tabSettings').addEventListener('click', function () { showTab('settings'); });
   el('goInstance').addEventListener('click', function (e) { e.preventDefault(); showTab('instance'); });
   el('paneLogin').addEventListener('submit', function (e) {
     e.preventDefault();
@@ -256,6 +280,7 @@ private val FORM_HTML = """<!doctype html>
   });
   refreshTheme();
   refreshLogin();
+  // Signing in is impossible without an instance, so that tab opens first.
   showTab(savedInstance ? 'login' : 'instance');
 </script>
 """
