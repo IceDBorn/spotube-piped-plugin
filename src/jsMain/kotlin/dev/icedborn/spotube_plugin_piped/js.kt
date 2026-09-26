@@ -50,6 +50,8 @@ import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrackAP
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrackAPI_SERVICE_NAME
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.user.MetadataUserAPI
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.user.MetadataUserAPI_SERVICE_NAME
+import dev.krtirtho.plugin_interfaces.plugin_apis.scrobble.ScrobbleAPI
+import dev.krtirtho.plugin_interfaces.plugin_apis.scrobble.ScrobbleAPI_SERVICE_NAME
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -100,6 +102,7 @@ fun main() {
             onLogin = { mirror.refreshCache() },
         )
         val trackApi = RealMetadataTrackAPI(client, store, library, mirror)
+        val scrobbles = ScrobbleHistory(history, store, fetchTrack = { id -> trackApi.getTrack(id) })
         val albumApi = RealMetadataAlbumAPI(client, store, library, mirror, albumLookup)
         val artistApi = RealMetadataArtistAPI(client, store, library, mirror) { seeds ->
             trackApi.recommendationsBasedOnTracks(seeds, 50)
@@ -118,9 +121,10 @@ fun main() {
                     }
                 )
             ) {
-                history.record(it)
+                scrobbles.onAudioRequested(it)
             },
         )
+        zipline.bind<ScrobbleAPI>(ScrobbleAPI_SERVICE_NAME, RealScrobbleAPI(scrobbles))
         zipline.bind<MetadataSearchAPI>(MetadataSearchAPI_SERVICE_NAME, RealMetadataSearchAPI(client, store))
         zipline.bind<MetadataTrackAPI>(MetadataTrackAPI_SERVICE_NAME, trackApi)
         zipline.bind<MetadataAlbumAPI>(MetadataAlbumAPI_SERVICE_NAME, albumApi)

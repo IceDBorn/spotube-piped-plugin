@@ -23,7 +23,7 @@ spotubePlugin {
         PluginCapability.PERSISTENT_STORAGE,
         PluginCapability.WEBVIEW
     )
-    abilities = listOf(PluginAbility.AUDIO, PluginAbility.METADATA)
+    abilities = listOf(PluginAbility.AUDIO, PluginAbility.METADATA, PluginAbility.SCROBBLE)
     license = "AGPL-3.0-or-later"
     contact = "https://github.com/IceDBorn/spotube-piped-plugin"
     repository = "https://github.com/IceDBorn/spotube-piped-plugin"
