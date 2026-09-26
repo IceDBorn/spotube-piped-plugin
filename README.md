@@ -1,7 +1,8 @@
 # spotube-piped-plugin
 
-Spotube plugin that provides both the audio and the metadata role through a Piped instance you choose. It needs no
-Google account, and a Piped account is optional.
+Spotube Nightly plugin that provides the audio, the metadata and the scrobble role through a Piped instance you
+choose. It needs no Google account, and a Piped account is optional. The roles are independent: pick any combination
+of them.
 
 ## Install
 
@@ -11,13 +12,14 @@ prerelease there is rebuilt from every push to `main`.
 To build from source:
 
 1. Build the plugin (see [Build](#build)).
-2. In Spotube, open Settings -> Manage plugins -> Install a Plugin -> Install from file or URL. If you built with
-   `--serve`, paste one of the URLs it prints.
+2. In Spotube Nightly, open Settings -> Manage plugins -> Install a Plugin -> Install from file or URL. If you
+   built with `--serve`, paste one of the URLs it prints.
 
 ## Setup
 
-There is no default instance. Open Settings -> Manage plugins, choose Piped as the metadata plugin, the audio plugin
-or both, then press the login button on Piped. The settings form has three tabs: Login, Instance and Settings.
+There is no default instance. Open Settings -> Manage Plugins, choose Piped as the metadata plugin, the audio plugin,
+the scrobble plugin or any combination of them, then press the login button on Piped. The settings form has three
+tabs: Login, Instance and Settings.
 
 The **Instance** tab:
 
@@ -42,7 +44,7 @@ The **Login** tab is optional. Sign in to, or register on, the instance. Saved t
 to the "Spotube - Favorites", "Spotube - Albums" and "Spotube - Artists" playlists on that account, and a copy stays
 on the device for offline use. Without an account, everything stays local.
 
-While an account is signed in, the host button on Piped reads Logout, and pressing it opens the same form on the
+While an account is signed in, the button on Piped reads Logout, and pressing it opens the same form on the
 Settings tab. The Login tab then shows who is signed in, with **Log out** and **Done**. Done closes the form and
 keeps the session.
 
@@ -52,6 +54,8 @@ A session belongs to the instance it was created on. Changing the instance signs
 
 - **Audio**: searches YouTube Music first and falls back to plain YouTube when the match is weak.
 - **Metadata**: tracks, albums, artists, playlists, search and a Home screen.
+- **Scrobbling**: takes the scrobble role and writes what Spotube Nightly reports into the play history that Home
+  reads, so the history is right even when Piped is only the metadata or only the scrobble plugin.
 - **Home, For you tab**: recently played, your artists, radio mixes from recent plays, similar artists, albums and
   playlists of your most played artists, your playlists and saved albums.
 - **Related artists**: artist pages and the Home "Fans also like" section list artists taken from YouTube Music
@@ -59,10 +63,21 @@ A session belongs to the instance it was created on. Changing the instance signs
 - **Home, Charts tab**: YouTube Music charts for your region, read from the playlists of the "YouTube Music Global
   Charts" channel, because Piped has no charts endpoint.
 
-Spotube passes plugins no play history, so the plugin keeps its own. It records every track it resolves audio for,
-so a track that Spotube preloads counts as played even if you skip it.
+Play history is local. The plugin keeps its own, from two sources:
 
-Spotube caches Home until it restarts, so a region change shows up after a restart.
+- **Scrobbles.** With Piped selected as the scrobble plugin, Spotube Nightly reports a play once a track has really
+  played, after half its length or 240 seconds, whichever comes first. From the first such report on, the scrobbles
+  are the history, and a track the player only preloaded is not counted.
+- **Audio resolves.** Until the first scrobble arrives, every track the plugin resolves audio for counts as a play.
+  The player preloads the next track and resolves again on a seek, so this over-counts: a skipped track and a seek
+  both show up as plays.
+
+A scrobble that follows an audio resolve of the same track, within the track's duration plus ten minutes, counts
+once, so one listen is not two plays. The switch to scrobbles lasts for the session only and is not stored. A
+scrobble for a track Piped cannot resolve, for example a track that came from another metadata plugin, is dropped and
+the audio role keeps feeding the history for it.
+
+Spotube Nightly caches Home until it restarts, so a region change shows up after a restart.
 
 ## Build
 
@@ -111,13 +126,13 @@ passwords.
 
 ## Known limitations
 
-- Spotube Nightly has a Region setting (Settings -> Language & Region), but the host does not pass it to plugins yet.
+- Spotube Nightly has a Region setting (Settings -> Language & Region), but it does not pass it to plugins yet.
 - Spotube Nightly has no settings button for plugins yet, only Login and Logout. The plugin opens its settings
   form from that button, so while an account is signed in, the button reads Logout but opens the settings. To
-  sign out, press **Log out** on the Login tab. The host also clears the plugin's web view data on every press,
-  which does not affect the Piped session.
-- Spotube Nightly does not send scrobbles to plugins yet, so selecting Piped as the scrobble plugin has no effect.
-  Play history keeps coming from the tracks the plugin resolves audio for, see [Features](#features).
+  sign out, press **Log out** on the Login tab. Spotube Nightly also clears the plugin's web view data on every
+  press, which does not affect the Piped session.
+- Spotube Nightly does not send scrobbles to plugins yet, so selecting Piped as the scrobble plugin has no effect
+  and play history keeps coming from the tracks the plugin resolves audio for, see [Features](#features).
 - Spotube Nightly does not ask plugins for updates yet, so the update channel has no effect and no update is offered in the
   app. To update, install from one of these URLs again:
   - stable: `https://github.com/IceDBorn/spotube-piped-plugin/releases/latest/download/spotube-plugin-piped.smplug`
