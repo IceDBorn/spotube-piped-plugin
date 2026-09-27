@@ -24,6 +24,12 @@ class AudioPipedClient(private val client: PipedClient) {
         client.streamsForAudio(videoId)
     }
 
+    /** Whether the instance serves this media URL. null = no verdict, from a 5xx/429/redirect or a failed
+     * probe. Neither is proof of a refusal, so the caller keeps the stream. */
+    suspend fun servesMediaUrl(url: String): Boolean? = orNull("probe") {
+        client.servesMediaUrl(url)
+    }
+
     private suspend fun search(query: String, filter: String): List<PipedSearchItem>? {
         val page = orNull("search $filter") { client.search(query, filter) } ?: return null
         // Accept "stream" and "video" rows (music_songs can carry either); a channel or playlist row

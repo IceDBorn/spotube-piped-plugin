@@ -57,6 +57,8 @@ data class PipedStreamsInfo(
     val relatedStreams: List<PipedSearchItem> = emptyList(),
     // Audio-only; metadata never reads it. Metadata gates on relatedStreams, audio on this (round-108).
     val audioStreams: List<PipedAudioStream> = emptyList(),
+    // The muxed progressive row lives here with videoOnly:false; the rest are video-only.
+    val videoStreams: List<PipedVideoStream> = emptyList(),
 )
 
 @Serializable
@@ -67,6 +69,18 @@ data class PipedAudioStream(
     val mimeType: String = "",
     val itag: Int = -1,
     val bitrate: Int = -1,
+)
+
+/** A /streams videoStreams row. Only the muxed one (videoOnly:false, normally itag 18) is an audio
+ * source; [videoOnly] defaults to true so an omitted field never becomes one. */
+@Serializable
+data class PipedVideoStream(
+    val url: String = "",
+    val format: String = "",
+    val mimeType: String = "",
+    val itag: Int = -1,
+    val bitrate: Int = -1,
+    val videoOnly: Boolean = true,
 )
 
 /** A YouTube playlist page; YouTube Music albums arrive as OLAK5uy_* playlists. */

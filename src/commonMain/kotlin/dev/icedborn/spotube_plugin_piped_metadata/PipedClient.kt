@@ -59,6 +59,22 @@ class PipedClient(
         return json.decodeFromString(body)
     }
 
+    /** Whether the instance serves this URL, or null when it gave no verdict: only 403/404 are statements
+     * about the URL. The proxy ignores `Range`, so a ranged GET would fetch the whole body and this is a HEAD. */
+    suspend fun servesMediaUrl(url: String): Boolean? {
+        val response = httpClient.request(
+            method = HttpMethod.Head,
+            url = url,
+            requestHeaders = null,
+            body = null,
+        )
+        return when (response.statusCode) {
+            in 200..299 -> true
+            403, 404 -> false
+            else -> null
+        }
+    }
+
     /** The same /streams body read for playback. Audio consumes [PipedStreamsInfo.audioStreams] and never
      * reads relatedStreams, so the gate is on the field the caller uses (round-108). */
     suspend fun streamsForAudio(videoId: String): PipedStreamsInfo? {

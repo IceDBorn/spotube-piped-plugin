@@ -3,6 +3,8 @@ package dev.icedborn.spotube_plugin_piped
 import kotlin.coroutines.cancellation.CancellationException
 import dev.icedborn.spotube_plugin_piped_metadata.PipedAudioStream
 import dev.icedborn.spotube_plugin_piped_metadata.PipedSearchItem
+import dev.icedborn.spotube_plugin_piped_metadata.PipedStreamsInfo
+import dev.icedborn.spotube_plugin_piped_metadata.PipedVideoStream
 import dev.krtirtho.plugin_interfaces.extras.logger.Logger
 import dev.krtirtho.plugin_interfaces.plugin_apis.audio.AudioAPI
 import dev.krtirtho.plugin_interfaces.plugin_apis.audio.AudioFormat
@@ -97,9 +99,7 @@ class RealPipedAudioAPI(
             return emptyList()
         }
 
-        val streams = info.audioStreams
-            .filter { it.url.isNotBlank() }
-            .mapNotNull { it.toLossyStream() }
+        val streams = playableStreams(videoId, info)
 
         if (streams.isEmpty()) {
             audioApiLog.w { "no playable audio stream for $videoId" }
@@ -118,6 +118,49 @@ class RealPipedAudioAPI(
                 streams = streams,
             )
         )
+    }
+
+    /** The streams worth handing the host. A Piped proxy can refuse every audio row of a video with a 403
+     * and an empty body, which the host would write out as a 0-byte file, so a row needs a serving HEAD. */
+    private suspend fun playableStreams(videoId: String, info: PipedStreamsInfo): List<AudioStream.Lossy> {
+        val rows = info.audioStreams.filter { it.url.isNotBlank() }
+        if (rows.isEmpty()) return muxedStream(videoId, info)
+
+        // The refusal is per video, not per row, so one probe of the richest row settles the common case
+        // at the cost of a single request; only a refusal spends the rest of the probe budget.
+        val richest = rows.maxBy { it.bitrate }
+        val served = if (isServed(richest.url)) {
+            rows
+        } else {
+            audioApiLog.i { "$videoId: the instance refused the audio-only rows, trying the muxed row" }
+            rows.filter { isServed(it.url) }
+        }.mapNotNull { it.toLossyStream() }
+        if (served.isNotEmpty()) return served
+
+        return muxedStream(videoId, info)
+    }
+
+    /** The muxed progressive row (itag 18). Only a progressive URL: the host downloads whatever URL it is
+     * given without reading the protocol, so an HLS manifest would land on disk as the audio file. */
+    private suspend fun muxedStream(videoId: String, info: PipedStreamsInfo): List<AudioStream.Lossy> {
+        val muxed = info.videoStreams
+            .firstOrNull { !it.videoOnly && it.url.isNotBlank() }
+            ?.toLossyStream(fallbackBitrate = MUXED_BITRATE)
+        if (muxed != null && isServed(muxed.url)) {
+            // The row is audio AND video, so the file is a small mp4 with a picture track.
+            audioApiLog.i { "$videoId: using the muxed progressive row (itag 18), a video file with audio" }
+            return listOf(muxed)
+        }
+        return emptyList()
+    }
+
+    private suspend fun isServed(url: String): Boolean = when (client.servesMediaUrl(url)) {
+        true -> true
+        false -> {
+            audioApiLog.d { "the instance refused a stream URL" }
+            false
+        }
+        null -> true
     }
 }
 
@@ -189,6 +232,10 @@ private fun PipedSearchItem.confidenceAgainst(track: MetadataTrack): Float {
     return score.coerceAtMost(1.0f)
 }
 
+// itag 18 reports bitrate 0, so the muxed row needs a value to be rankable at all. The host only uses
+// the bitrate to pick a preference, and the row's own audio is roughly this rate.
+private const val MUXED_BITRATE = 96_000
+
 private fun PipedAudioStream.toLossyStream(): AudioStream.Lossy? {
     val isWebm = mimeType.contains("webm") || format.equals("WEBMA", ignoreCase = true) || itag in setOf(249, 250, 251)
     val codec = if (isWebm) "opus" else "aac"
@@ -202,6 +249,19 @@ private fun PipedAudioStream.toLossyStream(): AudioStream.Lossy? {
             bitrate = it,
         )
     }
+}
+
+/** The muxed row is video/mp4 + MPEG_4 at itag 18, so the same aac/mp4 mapping applies; only the bitrate
+ * is missing, so [fallbackBitrate] is required, otherwise a bitrate-0 row maps to nothing. */
+private fun PipedVideoStream.toLossyStream(fallbackBitrate: Int): AudioStream.Lossy {
+    val isWebm = mimeType.contains("webm") || format.equals("WEBM", ignoreCase = true)
+    return AudioStream.Lossy(
+        url = url,
+        codec = if (isWebm) "opus" else "aac",
+        container = if (isWebm) "webm" else "mp4",
+        // fallbackBitrate is non-null and required, so the Elvis cannot yield null here.
+        bitrate = bitrate.takeIf { it > 0 } ?: fallbackBitrate,
+    )
 }
 
 private val ITAG_BITRATES = mapOf(
