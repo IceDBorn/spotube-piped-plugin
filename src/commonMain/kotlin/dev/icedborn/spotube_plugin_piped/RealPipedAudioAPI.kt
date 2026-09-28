@@ -260,7 +260,8 @@ private fun PipedVideoStream.toLossyStream(fallbackBitrate: Int): AudioStream.Lo
     val isWebm = mimeType.contains("webm") || format.equals("WEBM", ignoreCase = true)
     return AudioStream.Lossy(
         url = url,
-        codec = if (isWebm) "opus" else "aac",
+        // Muxed WebM (itag 43) carries Vorbis, unlike the audio-only Opus rows.
+        codec = if (isWebm) "vorbis" else "aac",
         container = if (isWebm) "webm" else "mp4",
         // fallbackBitrate is non-null and required, so the Elvis cannot yield null here.
         bitrate = bitrate.takeIf { it > 0 } ?: fallbackBitrate,

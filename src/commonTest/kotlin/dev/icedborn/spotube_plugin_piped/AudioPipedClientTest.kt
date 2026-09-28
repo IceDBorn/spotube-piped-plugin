@@ -226,6 +226,18 @@ class AudioPipedClientTest {
     }
 
     @Test
+    fun `a muxed webm row is labelled vorbis, not opus`() = runTest {
+        val body = """{"title":"One","audioStreams":[],"videoStreams":[
+            {"url":"https://piped.example/video/43","format":"WEBM","quality":"","mimeType":"video/webm","itag":43,"bitrate":0,"videoOnly":false}]}"""
+        val http = FakeHttp().apply {
+            onPath("/streams/", body = body)
+            onPath("/video/43", body = "webm")
+        }
+        val stream = assertNotNull(sourceApi(http).getStreamsOfAudioSource(basicSource()).single())
+        assertEquals("vorbis", stream.streams.single().codec)
+    }
+
+    @Test
     fun `a 404 is a refusal and drops the row`() = runTest {
         val http = FakeHttp().apply {
             onPath("/streams/", body = refusedBody)
