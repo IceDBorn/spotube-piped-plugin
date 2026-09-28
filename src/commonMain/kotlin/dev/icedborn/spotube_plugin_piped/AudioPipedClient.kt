@@ -24,8 +24,7 @@ class AudioPipedClient(private val client: PipedClient) {
         client.streamsForAudio(videoId)
     }
 
-    /** Whether the instance serves this media URL. null = no verdict, from a 5xx/429/redirect or a failed
-     * probe. Neither is proof of a refusal, so the caller keeps the stream. */
+    /** null = no verdict (5xx, 429, redirect or a failed probe), which the caller treats as served. */
     suspend fun servesMediaUrl(url: String): Boolean? = orNull("probe") {
         client.servesMediaUrl(url)
     }

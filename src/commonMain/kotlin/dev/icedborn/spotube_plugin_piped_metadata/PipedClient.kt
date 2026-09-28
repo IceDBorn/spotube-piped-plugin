@@ -59,8 +59,7 @@ class PipedClient(
         return json.decodeFromString(body)
     }
 
-    /** Whether the instance serves this URL, or null when it gave no verdict: only 403/404 are statements
-     * about the URL. The proxy ignores `Range`, so a ranged GET would fetch the whole body and this is a HEAD. */
+    /** Only 403/404 refuse the URL; other non-2xx is null. HEAD because the proxy ignores `Range`. */
     suspend fun servesMediaUrl(url: String): Boolean? {
         val response = httpClient.request(
             method = HttpMethod.Head,

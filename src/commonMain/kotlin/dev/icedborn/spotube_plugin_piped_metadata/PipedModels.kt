@@ -71,8 +71,7 @@ data class PipedAudioStream(
     val bitrate: Int = -1,
 )
 
-/** A /streams videoStreams row. Only the muxed one (videoOnly:false, normally itag 18) is an audio
- * source; [videoOnly] defaults to true so an omitted field never becomes one. */
+/** Only the muxed row (videoOnly:false, itag 18) is an audio source; an omitted [videoOnly] means true. */
 @Serializable
 data class PipedVideoStream(
     val url: String = "",

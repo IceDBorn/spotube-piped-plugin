@@ -143,8 +143,7 @@ class RealPipedAudioAPI(
         return served.ifEmpty { muxedStream(videoId, info) }
     }
 
-    /** The muxed progressive row (itag 18). Only a progressive URL: the host downloads whatever URL it is
-     * given without reading the protocol, so an HLS manifest would land on disk as the audio file. */
+    /** The muxed progressive row (itag 18); never HLS, since the host would save the manifest as the file. */
     private suspend fun muxedStream(videoId: String, info: PipedStreamsInfo): List<AudioStream.Lossy> {
         val muxed = info.videoStreams
             .firstOrNull { !it.videoOnly && it.url.isNotBlank() }
@@ -235,8 +234,7 @@ private fun PipedSearchItem.confidenceAgainst(track: MetadataTrack): Float {
     return score.coerceAtMost(1.0f)
 }
 
-// itag 18 reports bitrate 0, so the muxed row needs a value to be rankable at all. The host only uses
-// the bitrate to pick a preference, and the row's own audio is roughly this rate.
+// Roughly itag 18's audio rate; the host only uses bitrate to rank streams.
 private const val MUXED_BITRATE = 96_000
 
 private fun PipedAudioStream.toLossyStream(): AudioStream.Lossy? {
@@ -254,8 +252,7 @@ private fun PipedAudioStream.toLossyStream(): AudioStream.Lossy? {
     }
 }
 
-/** The muxed row is video/mp4 + MPEG_4 at itag 18, so the same aac/mp4 mapping applies; only the bitrate
- * is missing, so [fallbackBitrate] is required, otherwise a bitrate-0 row maps to nothing. */
+/** itag 18 reports bitrate 0, so [fallbackBitrate] stands in for it. */
 private fun PipedVideoStream.toLossyStream(fallbackBitrate: Int): AudioStream.Lossy {
     val isWebm = mimeType.contains("webm") || format.equals("WEBM", ignoreCase = true)
     return AudioStream.Lossy(
@@ -263,7 +260,6 @@ private fun PipedVideoStream.toLossyStream(fallbackBitrate: Int): AudioStream.Lo
         // Muxed WebM (itag 43) carries Vorbis, unlike the audio-only Opus rows.
         codec = if (isWebm) "vorbis" else "aac",
         container = if (isWebm) "webm" else "mp4",
-        // fallbackBitrate is non-null and required, so the Elvis cannot yield null here.
         bitrate = bitrate.takeIf { it > 0 } ?: fallbackBitrate,
     )
 }
