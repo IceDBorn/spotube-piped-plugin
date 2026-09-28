@@ -2,6 +2,7 @@ package dev.icedborn.spotube_plugin_piped
 
 import dev.icedborn.spotube_plugin_piped_metadata.PipedClient
 import dev.icedborn.spotube_plugin_piped_metadata.fakes.FakeHttp
+import dev.krtirtho.plugin_interfaces.host_apis.HttpMethod
 import dev.krtirtho.plugin_interfaces.plugin_apis.audio.AudioSource
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlin.test.Test
@@ -191,6 +192,19 @@ class AudioPipedClientTest {
         // The refused richest row is not probed a second time.
         assertEquals(1, http.countMatching("/audio/251"))
         assertEquals(1, http.countMatching("/audio/140"))
+    }
+
+    @Test
+    fun `probes are HEAD requests, since the proxy ignores Range and a GET fetches the whole body`() = runTest {
+        val http = FakeHttp().apply {
+            onPath("/streams/", body = refusedBody)
+            onPath("/audio/", status = 403, body = "")
+            onPath("/video/18", body = "mp4")
+        }
+        sourceApi(http).getStreamsOfAudioSource(basicSource())
+        val probes = http.methods.filter { !it.second.contains("/streams/") }
+        assertEquals(3, probes.size)
+        assertTrue(probes.all { it.first == HttpMethod.Head }, "probes: $probes")
     }
 
     @Test

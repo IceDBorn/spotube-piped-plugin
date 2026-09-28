@@ -8,6 +8,7 @@ import kotlinx.coroutines.delay
 /** Offline stand-in for the host HTTP API: routes are matched in registration order, misses give a 404. */
 class FakeHttp : HttpClientAPI {
     val requests = mutableListOf<String>()
+    val methods = mutableListOf<Pair<HttpMethod, String>>()
     private val routes = mutableListOf<Pair<(String) -> Boolean, HttpResponse>>()
     private val throwing = mutableListOf<Pair<(String) -> Boolean, Throwable>>()
 
@@ -38,6 +39,7 @@ class FakeHttp : HttpClientAPI {
         body: String?,
     ): HttpResponse {
         requests += url
+        methods += method to url
         if (latencyMs > 0) delay(latencyMs)
         throwing.firstOrNull { it.first(url) }?.let { throw it.second }
         return routes.firstOrNull { it.first(url) }?.second ?: HttpResponse(404, emptyMap(), "")
