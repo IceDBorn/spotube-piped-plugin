@@ -143,10 +143,10 @@ class RealPipedAudioAPI(
         return served.ifEmpty { muxedStream(videoId, info) }
     }
 
-    /** The muxed progressive row (itag 18); never HLS, since the host would save the manifest as the file. */
+    /** itag 18 only: videoStreams can also hold LBRY mirror rows, one of them an HLS manifest. */
     private suspend fun muxedStream(videoId: String, info: PipedStreamsInfo): List<AudioStream.Lossy> {
         val muxed = info.videoStreams
-            .firstOrNull { !it.videoOnly && it.url.isNotBlank() }
+            .firstOrNull { it.itag == MUXED_ITAG && it.url.isNotBlank() }
             ?.toLossyStream(fallbackBitrate = MUXED_BITRATE)
         if (muxed != null && isServed(muxed.url)) {
             // The row is audio AND video, so the file is a small mp4 with a picture track.
@@ -236,6 +236,7 @@ private fun PipedSearchItem.confidenceAgainst(track: MetadataTrack): Float {
 
 // Roughly itag 18's audio rate; the host only uses bitrate to rank streams.
 private const val MUXED_BITRATE = 96_000
+private const val MUXED_ITAG = 18
 
 private fun PipedAudioStream.toLossyStream(): AudioStream.Lossy? {
     val isWebm = mimeType.contains("webm") || format.equals("WEBMA", ignoreCase = true) || itag in setOf(249, 250, 251)
@@ -253,16 +254,12 @@ private fun PipedAudioStream.toLossyStream(): AudioStream.Lossy? {
 }
 
 /** itag 18 reports bitrate 0, so [fallbackBitrate] stands in for it. */
-private fun PipedVideoStream.toLossyStream(fallbackBitrate: Int): AudioStream.Lossy {
-    val isWebm = mimeType.contains("webm") || format.equals("WEBM", ignoreCase = true)
-    return AudioStream.Lossy(
-        url = url,
-        // Muxed WebM (itag 43) carries Vorbis, unlike the audio-only Opus rows.
-        codec = if (isWebm) "vorbis" else "aac",
-        container = if (isWebm) "webm" else "mp4",
-        bitrate = bitrate.takeIf { it > 0 } ?: fallbackBitrate,
-    )
-}
+private fun PipedVideoStream.toLossyStream(fallbackBitrate: Int) = AudioStream.Lossy(
+    url = url,
+    codec = "aac",
+    container = "mp4",
+    bitrate = bitrate.takeIf { it > 0 } ?: fallbackBitrate,
+)
 
 private val ITAG_BITRATES = mapOf(
     139 to 48_000,

@@ -240,15 +240,20 @@ class AudioPipedClientTest {
     }
 
     @Test
-    fun `a muxed webm row is labelled vorbis, not opus`() = runTest {
+    fun `LBRY mirror rows are skipped in favour of itag 18`() = runTest {
+        // The shape pipedapi.ducks.party returned on 2026-09-28: LBRY mp4 (401) and HLS rows before itag 18.
         val body = """{"title":"One","audioStreams":[],"videoStreams":[
-            {"url":"https://piped.example/video/43","format":"WEBM","quality":"","mimeType":"video/webm","itag":43,"bitrate":0,"videoOnly":false}]}"""
+            {"url":"https://lbry.example/v6/streams/x.mp4","format":"MP4","quality":"LBRY","mimeType":"video/mp4","itag":-1,"bitrate":0,"videoOnly":false},
+            {"url":"https://lbry.example/v6/streams/x","format":"HLS","quality":"LBRY HLS","mimeType":"application/x-mpegurl","itag":-1,"bitrate":0,"videoOnly":false},
+            {"url":"https://piped.example/video/18","format":"MPEG_4","quality":"360p","mimeType":"video/mp4","itag":18,"bitrate":0,"videoOnly":false}]}"""
         val http = FakeHttp().apply {
             onPath("/streams/", body = body)
-            onPath("/video/43", body = "webm")
+            onPath("/v6/streams/", status = 401, body = "")
+            onPath("/video/18", body = "mp4")
         }
         val stream = assertNotNull(sourceApi(http).getStreamsOfAudioSource(basicSource()).single())
-        assertEquals("vorbis", stream.streams.single().codec)
+        assertEquals(listOf("https://piped.example/video/18"), stream.streams.map { it.url })
+        assertEquals(0, http.countMatching("lbry.example"))
     }
 
     @Test
