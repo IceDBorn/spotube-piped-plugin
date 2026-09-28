@@ -13,6 +13,9 @@ import dev.krtirtho.plugin_interfaces.plugin_apis.audio.AudioSource
 import dev.krtirtho.plugin_interfaces.plugin_apis.audio.AudioStream
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.Thumbnail
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlin.math.abs
 
 private val audioApiLog = Logger("PipedAudioAPI")
@@ -120,24 +123,24 @@ class RealPipedAudioAPI(
         )
     }
 
-    /** The streams worth handing the host. A Piped proxy can refuse every audio row of a video with a 403
-     * and an empty body, which the host would write out as a 0-byte file, so a row needs a serving HEAD. */
+    /** A proxy can refuse every audio row of a video with an empty 403, which the host saves as a 0-byte
+     * file, so a row is offered only after a serving HEAD. */
     private suspend fun playableStreams(videoId: String, info: PipedStreamsInfo): List<AudioStream.Lossy> {
-        val rows = info.audioStreams.filter { it.url.isNotBlank() }
+        val rows = info.audioStreams.filter { it.url.isNotBlank() }.mapNotNull { it.toLossyStream() }
         if (rows.isEmpty()) return muxedStream(videoId, info)
 
-        // The refusal is per video, not per row, so one probe of the richest row settles the common case
-        // at the cost of a single request; only a refusal spends the rest of the probe budget.
+        // The refusal is per video, so one probe of the richest row settles the common case.
         val richest = rows.maxBy { it.bitrate }
-        val served = if (isServed(richest.url)) {
-            rows
-        } else {
-            audioApiLog.i { "$videoId: the instance refused the audio-only rows, trying the muxed row" }
-            rows.filter { isServed(it.url) }
-        }.mapNotNull { it.toLossyStream() }
-        if (served.isNotEmpty()) return served
+        if (isServed(richest.url)) return rows
 
-        return muxedStream(videoId, info)
+        audioApiLog.i { "$videoId: the instance refused the richest audio row, probing the rest" }
+        val served = coroutineScope {
+            rows.filter { it !== richest }
+                .map { row -> async { row.takeIf { isServed(it.url) } } }
+                .awaitAll()
+                .filterNotNull()
+        }
+        return served.ifEmpty { muxedStream(videoId, info) }
     }
 
     /** The muxed progressive row (itag 18). Only a progressive URL: the host downloads whatever URL it is

@@ -188,6 +188,41 @@ class AudioPipedClientTest {
         }
         val stream = assertNotNull(sourceApi(http).getStreamsOfAudioSource(basicSource()).single())
         assertEquals(listOf("https://piped.example/video/18"), stream.streams.map { it.url })
+        // The refused richest row is not probed a second time.
+        assertEquals(1, http.countMatching("/audio/251"))
+        assertEquals(1, http.countMatching("/audio/140"))
+    }
+
+    @Test
+    fun `after a refusal the remaining rows are probed in parallel`() = runTest {
+        val body = """{"title":"One","audioStreams":[
+            {"url":"https://piped.example/audio/251","format":"251","quality":"160kbps","mimeType":"audio/webm","itag":251,"bitrate":160000},
+            {"url":"https://piped.example/audio/140","format":"140","quality":"128kbps","mimeType":"audio/mp4","itag":140,"bitrate":128000},
+            {"url":"https://piped.example/audio/250","format":"250","quality":"70kbps","mimeType":"audio/webm","itag":250,"bitrate":70000}]}"""
+        val http = FakeHttp().apply {
+            latencyMs = 100
+            onPath("/streams/", body = body)
+            onPath("/audio/251", status = 403, body = "")
+            onPath("/audio/", body = "audio")
+        }
+        val stream = assertNotNull(sourceApi(http).getStreamsOfAudioSource(basicSource()).single())
+        assertEquals(listOf("https://piped.example/audio/140", "https://piped.example/audio/250"), stream.streams.map { it.url })
+        // /streams, the richest probe, then one round for both remaining probes; serial would be 400.
+        assertEquals(300, testScheduler.currentTime)
+    }
+
+    @Test
+    fun `a row with no resolvable bitrate is never probed`() = runTest {
+        val body = """{"title":"One","audioStreams":[
+            {"url":"https://piped.example/audio/251","format":"251","quality":"160kbps","mimeType":"audio/webm","itag":251,"bitrate":160000},
+            {"url":"https://piped.example/audio/999","format":"","quality":"","mimeType":"audio/mp4","itag":999,"bitrate":0}]}"""
+        val http = FakeHttp().apply {
+            onPath("/streams/", body = body)
+            onPath("/audio/251", status = 403, body = "")
+            onPath("/audio/999", body = "audio")
+        }
+        assertTrue(sourceApi(http).getStreamsOfAudioSource(basicSource()).isEmpty())
+        assertEquals(0, http.countMatching("/audio/999"))
     }
 
     @Test
