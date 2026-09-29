@@ -19,14 +19,14 @@ jobs:
       contents: write
     steps:
       # Tags and full history, so the notes step can diff against the last stable release.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: temurin
           java-version: 21
-      - uses: gradle/actions/setup-gradle@v6
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
 
       # Next patch over the last stable, so every nightly outranks the release it was built on.
       - name: Read version
@@ -42,8 +42,9 @@ jobs:
       - name: Build
         run: ./gradlew -PpluginVersion=${{ steps.version.outputs.version }} :generatePluginJson --rerun-tasks :packageProductionPlugin
 
-      # Recreate the release: moving the tag leaves the old asset and title in place.
-      # The tag is always "nightly", so the update check reads the version from the title.
+      # The tag is always "nightly", so the update check reads the version from the title. The new asset uploads
+      # under a versioned name, every other bundle is deleted, and the rename publishes it, so the release lacks
+      # a bundle only between the delete and the rename. The title changes last.
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -53,7 +54,23 @@ jobs:
           # Commits since the last stable tag, which is what a nightly user gets over stable.
           { echo "Nightly build of $GITHUB_SHA."; echo; \
             .github/scripts/release-notes.sh nightly "$VERSION"; } > body.md
-          gh release delete nightly --cleanup-tag --yes || true
-          gh release create nightly spotube-plugin-piped.smplug \
-            --prerelease --target "$GITHUB_SHA" --title "$VERSION" \
-            --notes-file body.md
+          if gh release view nightly >/dev/null 2>&1; then
+            git tag -f nightly "$GITHUB_SHA"
+            git push -f origin refs/tags/nightly
+            staged="spotube-plugin-piped-$VERSION.smplug"
+            cp spotube-plugin-piped.smplug "$staged"
+            gh release upload nightly "$staged" --clobber
+            assets=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/nightly" --jq '.assets[] | "\(.id) \(.name)"')
+            new=$(awk -v n="$staged" '$2 == n { print $1 }' <<< "$assets")
+            [ -n "$new" ] || { echo "uploaded asset $staged not found"; exit 1; }
+            # A bundle a cancelled run left behind goes too; the update check prefers the published name anyway.
+            awk -v n="$staged" '$2 != n && $2 ~ /\.smplug$/ { print $1 }' <<< "$assets" | while read -r id; do
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$id"
+            done
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/assets/$new" -f name=spotube-plugin-piped.smplug >/dev/null
+            gh release edit nightly --prerelease --title "$VERSION" --notes-file body.md
+          else
+            gh release create nightly spotube-plugin-piped.smplug \
+              --prerelease --target "$GITHUB_SHA" --title "$VERSION" \
+              --notes-file body.md
+          fi

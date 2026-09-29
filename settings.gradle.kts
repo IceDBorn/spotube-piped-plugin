@@ -32,4 +32,3 @@ dependencyResolutionManagement {
         mavenLocal()
     }
 }
-

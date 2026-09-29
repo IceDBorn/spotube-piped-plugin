@@ -7,7 +7,7 @@ of them.
 ## Install
 
 Stable builds are on the [Releases page](https://github.com/IceDBorn/spotube-piped-plugin/releases). The `nightly`
-prerelease there is rebuilt from every push to `main`.
+prerelease there is rebuilt from every push to `main` that changes more than the docs.
 
 To build from source:
 
@@ -17,14 +17,14 @@ To build from source:
 
 ## Setup
 
-There is no default instance. Open Settings -> Manage Plugins, choose Piped as the metadata plugin, the audio plugin,
+There is no default instance. Open Settings -> Manage plugins, choose Piped as the metadata plugin, the audio plugin,
 the scrobble plugin or any combination of them, then press the login button on Piped. The settings form has three
 tabs: Login, Instance and Settings.
 
 The **Instance** tab:
 
-- **Instance**: the URL of any instance from the [TeamPiped list](https://github.com/TeamPiped/Piped/wiki/Instances),
-  or your own.
+- **Piped instance** (required): the URL of any instance from the
+  [TeamPiped list](https://github.com/TeamPiped/Piped/wiki/Instances), or your own.
 - **Playback instance** (optional): resolve audio from a different instance than the one serving metadata.
 
 The **Settings** tab:
@@ -48,14 +48,18 @@ While an account is signed in, the button on Piped reads Logout, and pressing it
 Settings tab. The Login tab then shows who is signed in, with **Log out** and **Done**. Done closes the form and
 keeps the session.
 
-A session belongs to the instance it was created on. Changing the instance signs you out.
+A session belongs to the instance it was created on. Changing the instance signs you out. When the form was opened
+with the login button while a session was stored, Done closes it and then checks the session in the background.
+Only a 401 or 403 with an error body clears it; when the instance is down or you are offline, the session stays.
+Done on the form opened from Logout keeps the session without a check.
 
 ## Features
 
 - **Audio**: searches YouTube Music first and falls back to plain YouTube when the match is weak.
 - **Metadata**: tracks, albums, artists, playlists, search and a Home screen.
 - **Scrobbling**: takes the scrobble role and writes what Spotube Nightly reports into the play history that Home
-  reads, so the history is right even when Piped is only the metadata or only the scrobble plugin.
+  reads, so history fills even when Piped is not the audio plugin, as long as the tracks come from Piped's
+  metadata.
 - **Home, For you tab**: recently played, your artists, radio mixes from recent plays, similar artists, albums and
   playlists of your most played artists, your playlists and saved albums.
 - **Related artists**: artist pages and the Home "Fans also like" section list artists taken from YouTube Music
@@ -69,15 +73,50 @@ Play history is local. The plugin keeps its own, from two sources:
   played, after half its length or 240 seconds, whichever comes first. From the first such report on, the scrobbles
   are the history, and a track the player only preloaded is not counted.
 - **Audio resolves.** Until the first scrobble arrives, every track the plugin resolves audio for counts as a play.
-  The player preloads the next track and resolves again on a seek, so this over-counts: a skipped track and a seek
-  both show up as plays.
+  The player preloads the next track and resolves again on a seek, so this over-counts: a skipped track counts, and
+  so does a seek more than a minute after the track started.
 
-A scrobble that follows an audio resolve of the same track, within the track's duration plus ten minutes, counts
-once, so one listen is not two plays. The switch to scrobbles lasts for the session only and is not stored. A
-scrobble for a track Piped cannot resolve, for example a track that came from another metadata plugin, is dropped and
-the audio role keeps feeding the history for it.
+A scrobble that follows an audio resolve of the same track, within the track's duration plus ten minutes (20
+minutes when the duration is unknown), counts once, so one listen is not two plays. The switch to scrobbles lasts
+for the session only and is not stored. A scrobble for a track Piped cannot resolve, for example a track that came
+from another metadata plugin, is dropped and the audio role keeps feeding the history for it.
 
 Spotube Nightly caches Home until it restarts, so a region change shows up after a restart.
+
+### Audio streams
+
+Before it offers a stream, the plugin sends a HEAD request to check that the instance's proxy serves it, because
+some proxies answer every audio row of a video with an empty 403, which the host would save as a 0-byte file. After
+a proxy served a video, that video skips the check for 30 minutes. Only a 403 or 404 counts as a refusal. Any other
+answer that is not a success, such as a timeout, a 429 or a 5xx, lets the rows through without remembering the
+video.
+
+When the proxy serves no audio-only row, the plugin falls back to the muxed row with itag 18. That row is a small
+mp4 video file that carries the audio track, so the track plays, and a download of it holds a picture track too.
+
+### Account requests
+
+Saved tracks, albums and artists are written to three playlists on the account: "Spotube - Favorites",
+"Spotube - Albums" and "Spotube - Artists". The plugin keeps an index of each one's rows, and while the account's
+playlist listing reports the same row count as the index, a write needs no walk of the playlist:
+
+- Liking a track costs 2 requests: the playlist listing and the add. Saving an album or artist also fetches the
+  album or channel and checks a few videos, to pick a playable one that stands for it.
+- Unsaving costs the listing plus one request per deleted row. When the account cannot confirm that a row is gone,
+  the unsave fails and the item stays saved, so you can try again.
+- When the row count changed on the web, the next write walks the playlist once. A reorder on the web that keeps
+  the count is not noticed until the next refresh.
+
+The account refresh runs at login, at start, and every 15 minutes while the app is used. It walks 3 playlists at a
+time and reads at most 20 pages of each saved-items playlist; a longer one continues on the next refresh. Mapping
+the album and artist rows back to albums and artists runs in the background, with at most 40 lookup requests per
+list per refresh.
+
+Opening an album from a track waits up to 4 seconds for the album lookup, which costs at most 17 requests. After 4
+seconds the plugin shows a placeholder while the lookup finishes in the background, and opening the album again
+shows it.
+
+[docs/design.md](docs/design.md) lists the storage keys, the index format and the row cache rules.
 
 ## Build
 
@@ -97,14 +136,19 @@ The version comes from `pluginVersion` in `gradle.properties`. That is the last 
 nightly, pass the next patch with a prerelease suffix, which orders above that release and below the next one:
 
 ```sh
-./gradlew -PpluginVersion=0.0.2-nightly.7 :generatePluginJson --rerun-tasks :packageProductionPlugin
+./gradlew -PpluginVersion=0.0.6-nightly.7 :generatePluginJson --rerun-tasks :packageProductionPlugin
 ```
 
 ## Test
 
 ```sh
 ./gradlew :jvmTest :jsNodeTest
+./gradlew ktlintCheck    # lint; ktlintFormat fixes most findings
 ```
+
+CI (`.github/workflows/ci.yml`) runs the lint, both test targets and `:packageProductionPlugin` on every push and
+pull request. The bundle build is part of it because Zipline's QuickJS rejects some JS that Node runs, so a change
+can pass every test and still fail to package.
 
 The offline tests run on both the JVM target and the JS target. The JVM target exists only for the tests; the
 shipped plugin is the JS bundle. The tests use fake host HTTP and storage APIs with canned Piped responses
@@ -121,8 +165,10 @@ PIPED_INSTANCE=https://your.instance ./gradlew :jvmTest --tests '*LiveSmokeTest*
 ## Logging
 
 Failed requests, sync errors and Home sections that fail to build go to the host log through the interfaces
-library's `Logger`. Response bodies are cut to 200 characters. Log lines never contain search text, tokens or
-passwords.
+library's `Logger`. Response bodies are cut to 200 characters. The plugin never puts search text, tokens or
+passwords into a log line itself, but it logs the message of a failed host request as is, and that message may hold
+the request URL with its query. Log lines also contain the account's username and instance URL, for example on
+sign-in and when a write to the account fails, so check a log before sharing it.
 
 ## Known limitations
 
@@ -136,8 +182,8 @@ passwords.
   press, which does not affect the Piped session.
 - Spotube Nightly does not send scrobbles to plugins yet, so selecting Piped as the scrobble plugin has no effect
   and play history keeps coming from the tracks the plugin resolves audio for, see [Features](#features).
-- Spotube Nightly does not ask plugins for updates yet, so the update channel has no effect and no update is offered in the
-  app. To update, install from one of these URLs again:
+- Spotube Nightly does not ask plugins for updates yet, so the update channel has no effect and no update is
+  offered in the app. To update, install from one of these URLs again:
   - stable: `https://github.com/IceDBorn/spotube-piped-plugin/releases/latest/download/spotube-plugin-piped.smplug`
   - nightly: `https://github.com/IceDBorn/spotube-piped-plugin/releases/download/nightly/spotube-plugin-piped.smplug`
 - Spotube Nightly on Android shows no play or add-to-queue buttons on Home sections made of tracks, such as
@@ -145,6 +191,7 @@ passwords.
   the buttons.
 - Spotube Nightly shows its "Liked tracks" card in Library -> Playlists only when the plugin returns at least one
   playlist. To keep the card reachable, the plugin adds a generated "Recently played" playlist, holding the last 50
-  tracks you played. With no history yet it lists your saved tracks instead, and the Library playlist setting
-  changes that: *Only when there are no playlists* matches today's behaviour, and *Off* removes it, which also hides
-  the Liked Tracks card when no other playlist exists. The entry cannot be edited or deleted.
+  tracks you played. With no history yet it shows a "Liked Songs" playlist of your saved tracks instead, and with
+  neither it adds nothing. The Library playlist setting controls the entry: *Only when there are no playlists* adds
+  it only while you have no other playlist, and *Off* removes it, which also hides the Liked tracks card when no
+  other playlist exists. The entry cannot be edited or deleted.

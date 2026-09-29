@@ -6,7 +6,8 @@ How a release is cut, and how the commit list in its body is generated.
 
 1. Bump `pluginVersion` in `gradle.properties` and push. The push also starts a
    nightly, which step 2 replaces.
-2. Run the `Release` workflow by hand on `main`. It tests, builds, and tags
+2. Run the `Release` workflow by hand on `main`. It fails at once when
+   `pluginVersion` is already tagged. Otherwise it tests, builds, and tags
    `pluginVersion` as the release, then refreshes the nightly.
 
 ## The rule
@@ -42,8 +43,13 @@ blank.
 The version bump push starts a nightly before the new tag exists, so that build
 would list the wrong range. `release.yml` ends with
 `gh workflow run nightly.yml --ref main` to rebuild it once the tag is in place.
-The nightly's concurrency group cancels the stale run if it is still going, and
-otherwise the refresh just replaces its release. This needs `actions: write`
+The nightly's concurrency group cancels the stale run if it is still going.
+Otherwise the refresh updates the existing `nightly` release in place: it moves
+the tag, uploads the new bundle under a versioned name, deletes every other
+`.smplug` asset, renames the upload to `spotube-plugin-piped.smplug`, then sets
+the title and notes. A versioned bundle that a cancelled run left behind is
+deleted by the next run, and until then the update check prefers the asset
+named `spotube-plugin-piped.smplug`. This needs `actions: write`
 alongside `contents: write` in the release job, and it re-runs the Gradle test
 suite, so a release costs a second build.
 

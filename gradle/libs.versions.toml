@@ -7,6 +7,8 @@ spotube-gradle = "0.1.1"
 spotube-plugin-interfaces = "0.1.0"
 ziplineVersion = "1.27.0"
 semver = "2.1.0"
+ktlint-gradle = "14.2.0"
+ktlint-cli = "1.8.0"
 
 [libraries]
 
@@ -23,3 +25,4 @@ kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref 
 kotlinx-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 spotubeGradle = { id = "dev.krtirtho.spotube.gradle-plugin", version.ref = "spotube-gradle" }
 zipline-gradle-plugin = { id = "app.cash.zipline", version.ref = "ziplineVersion" }
+ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint-gradle" }

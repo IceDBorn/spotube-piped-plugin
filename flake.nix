@@ -9,15 +9,21 @@
       nixpkgs,
     }:
     let
-      system = "x86_64-linux";
-      pkgs = nixpkgs.legacyPackages.${system};
-      buildScript = pkgs.writeShellApplication {
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "aarch64-darwin"
+      ];
+      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
+      buildScript = pkgs: pkgs.writeShellApplication {
         name = "build-piped-plugin";
         runtimeInputs = [
-          pkgs.jdk
+          pkgs.jdk21
           pkgs.python3
-          pkgs.iproute2
-        ];
+          # GNU realpath, since the BSD one on macOS has no -m.
+          pkgs.coreutils
+        ]
+        ++ pkgs.lib.optional pkgs.stdenv.hostPlatform.isLinux pkgs.iproute2;
         text = ''
           set -euo pipefail
           serve=false
@@ -55,9 +61,11 @@
             ln -s "$out" "$root/$name"
             echo "serving on port $port (Ctrl+C to stop), install from:"
             echo "  http://localhost:$port/$name"
-            ip -4 -o addr show scope global | while read -r _ _ _ addr _; do
-              echo "  http://''${addr%/*}:$port/$name"
-            done
+            if command -v ip >/dev/null; then
+              ip -4 -o addr show scope global | while read -r _ _ _ addr _; do
+                echo "  http://''${addr%/*}:$port/$name"
+              done
+            fi
             python3 -m http.server "$port" --directory "$root"
           fi
         '';
@@ -69,11 +77,15 @@
       # --serve then serves only that file over HTTP (default port 8000) for Spotube's install-from-URL.
       # The build runs as a normal process, so it reaches the network and reuses
       # the caller's ~/.gradle; no derivation or nix store package is involved.
-      apps.${system}.default = {
-        type = "app";
-        program = "${buildScript}/bin/build-piped-plugin";
-      };
+      apps = forAllSystems (pkgs: {
+        default = {
+          type = "app";
+          program = "${buildScript pkgs}/bin/build-piped-plugin";
+        };
+      });
 
-      devShells.${system}.default = pkgs.mkShell { packages = [ pkgs.jdk ]; };
+      devShells = forAllSystems (pkgs: {
+        default = pkgs.mkShell { packages = [ pkgs.jdk21 ]; };
+      });
     };
 }

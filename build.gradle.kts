@@ -1,14 +1,13 @@
 import dev.krtirtho.PluginAbility
 import dev.krtirtho.PluginCapability
 import org.gradle.kotlin.dsl.withType
-import org.jetbrains.kotlin.gradle.targets.js.yarn.YarnPlugin
-import org.jetbrains.kotlin.gradle.targets.js.yarn.YarnRootExtension
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.kotlinx.serialization)
     alias(libs.plugins.zipline.gradle.plugin)
     alias(libs.plugins.spotubeGradle)
+    alias(libs.plugins.ktlint)
 }
 
 spotubePlugin {
@@ -16,12 +15,13 @@ spotubePlugin {
     // Nightly CI passes -PpluginVersion=<x.y.(z+1)>-nightly.<run>; a plain build uses the last stable.
     version = providers.gradleProperty("pluginVersion").getOrElse("0.0.1")
     apiVersion = "0.0.1"
-    description = "YouTube Music audio + metadata (tracks, albums, artists, playlists, search) via a Piped instance you choose in the plugin settings (no default instance). Saved items sync to the account when online and stay cached on this device for offline use"
+    description =
+        "YouTube Music audio, metadata (tracks, albums, artists, playlists, search) and scrobbling to a local play history via a Piped instance you choose in the plugin settings (no default instance). Saved items sync to the account when online and stay cached on this device for offline use"
     author = "IceDBorn"
     capabilities = listOf(
         PluginCapability.NETWORK_REQUESTS,
         PluginCapability.PERSISTENT_STORAGE,
-        PluginCapability.WEBVIEW
+        PluginCapability.WEBVIEW,
     )
     abilities = listOf(PluginAbility.AUDIO, PluginAbility.METADATA, PluginAbility.SCROBBLE)
     license = "AGPL-3.0-or-later"
@@ -60,10 +60,10 @@ kotlin {
     }
 }
 
-zipline {
-    mainFunction.set("dev.icedborn.spotube_plugin_piped.main")
+ktlint {
+    version.set(libs.versions.ktlint.cli)
 }
 
-plugins.withType<YarnPlugin> {
-    the<YarnRootExtension>().yarnLockAutoReplace = true
+zipline {
+    mainFunction.set("dev.icedborn.spotube_plugin_piped.main")
 }
