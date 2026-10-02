@@ -26,6 +26,8 @@ internal class RealMetadataTrackAPI(
     private val mirror: PipedSavedLibrary,
 ) : MetadataTrackAPI {
 
+    private val songs = SongMatch(client)
+
     override suspend fun getTrack(id: String): MetadataTrack {
         store.cachedTrack(id)?.let { return it }
         val info = store.cachedStreams(id) ?: client.streamsForMetadata(id)
@@ -67,9 +69,10 @@ internal class RealMetadataTrackAPI(
             // The queue stays on YouTube Music, so it reads the radio mix playlist, not the plain related list.
             for (seed in seedTrackIds.take(2)) {
                 if (out.size >= limit) break
-                for (item in ytmRadioItems(seed)) {
+                val mixSeed = songSeed(seed)
+                for (item in ytmRadioItems(mixSeed)) {
                     val track = item.toTrack() ?: continue
-                    if (track.id == seed || out.containsKey(track.id)) continue
+                    if (track.id == seed || track.id == mixSeed || out.containsKey(track.id)) continue
                     out[track.id] = track
                     store.rememberTrack(track)
                     if (out.size >= limit) break
@@ -88,12 +91,20 @@ internal class RealMetadataTrackAPI(
         } ?: emptyList()
     }
 
-    /** YT Music radio mix rows, minus lives and long mixes. */
+    /** A mix seeded from a video lists videos, so a seed that looks like one is swapped for its song. Only a
+     * cached seed is checked, so a song seed costs no extra request. */
+    private suspend fun songSeed(seed: String): String {
+        val track = store.cachedTrack(seed) ?: return seed
+        if (!looksLikeVideo(track.title, track.artists.firstOrNull()?.name.orEmpty())) return seed
+        return songs.songFor(seed, track.title) ?: seed
+    }
+
+    /** YT Music radio mix rows, minus lives, long mixes and uploads that are videos rather than songs. */
     private suspend fun ytmRadioItems(seedVideoId: String): List<PipedSearchItem> {
         val mix = orNull("radio mix $seedVideoId") { client.playlist("RDAMVM$seedVideoId") }
             ?: return emptyList()
         return mix.relatedStreams.filter { item ->
-            item.type == "stream" && item.duration in 20..900
+            item.type == "stream" && item.duration in 20..900 && !looksLikeVideo(item.title, item.uploaderName)
         }
     }
 

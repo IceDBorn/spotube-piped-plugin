@@ -40,6 +40,9 @@ class FakePiped(var pageSize: Int = 2) : HttpClientAPI {
     /** Video id to uploader name; a video missing here still resolves with "Artist". */
     val uploaders = HashMap<String, String>()
 
+    /** Video id to title; a video missing here is titled "Title <id>". */
+    val titles = HashMap<String, String>()
+
     /** Video ids whose /streams answers 500. */
     val deadVideos = HashSet<String>()
     val channels = HashMap<String, String>()
@@ -160,7 +163,7 @@ class FakePiped(var pageSize: Int = 2) : HttpClientAPI {
         return ok(body.toString())
     }
 
-    fun row(videoId: String, title: String = "Title $videoId"): JsonObject = buildJsonObject {
+    fun row(videoId: String, title: String = titles[videoId] ?: "Title $videoId"): JsonObject = buildJsonObject {
         put("type", "stream")
         put("url", "/watch?v=$videoId")
         put("title", title)
@@ -179,7 +182,7 @@ class FakePiped(var pageSize: Int = 2) : HttpClientAPI {
     private fun streams(videoId: String): HttpResponse {
         if (videoId in deadVideos) return HttpResponse(500, emptyMap(), "")
         val body = buildJsonObject {
-            put("title", "Title $videoId")
+            put("title", titles[videoId] ?: "Title $videoId")
             put("duration", 200)
             put("uploader", uploaders[videoId] ?: "Artist")
             put("uploaderUrl", "/channel/UCchannelalpha01a0000000")

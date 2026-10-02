@@ -67,6 +67,10 @@ Done on the form opened from Logout keeps the session without a check.
   radio mixes, because Piped has no related-artists endpoint. A radio row names the channel that uploaded the
   video, so each name goes through one artist search, cached by name until restart. The plugin lists the artist
   whose name matches exactly and drops uploaders with no match, such as labels and fan channels.
+- **Radio queue**: endless playback and the Home radio sections read the YouTube Music radio mix of a track. A mix
+  seeded from a music video lists videos, so a seed whose title looks like a video costs one song search, cached
+  until restart, and the mix is read from the matching song. Rows titled like videos, with "Official Video",
+  "(Audio)", "Lyric Video" or an "Artist - " prefix naming the uploader, are dropped.
 - **Home, Charts tab**: YouTube Music charts for your region, read from the playlists of the "YouTube Music Global
   Charts" channel, because Piped has no charts endpoint.
 
