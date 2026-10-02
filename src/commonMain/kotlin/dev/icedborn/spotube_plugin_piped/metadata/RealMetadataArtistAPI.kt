@@ -9,14 +9,12 @@ import dev.icedborn.spotube_plugin_piped.client.channelIdOf
 import dev.icedborn.spotube_plugin_piped.client.cleanArtistName
 import dev.icedborn.spotube_plugin_piped.client.toAlbumDetailed
 import dev.icedborn.spotube_plugin_piped.client.toArtist
-import dev.icedborn.spotube_plugin_piped.client.toBasic
 import dev.icedborn.spotube_plugin_piped.client.toPlaylist
 import dev.icedborn.spotube_plugin_piped.client.toTrack
 import dev.icedborn.spotube_plugin_piped.core.PageDedupe
 import dev.icedborn.spotube_plugin_piped.core.continuationToken
 import dev.icedborn.spotube_plugin_piped.core.emptyPagination
 import dev.icedborn.spotube_plugin_piped.core.getOffsetOrDefault
-import dev.icedborn.spotube_plugin_piped.core.mapConcurrently
 import dev.icedborn.spotube_plugin_piped.core.nextContinuation
 import dev.icedborn.spotube_plugin_piped.core.savedPage
 import dev.icedborn.spotube_plugin_piped.store.EntityStore
@@ -54,6 +52,14 @@ internal class RealMetadataArtistAPI(
     private val relatedCache = LinkedHashMap<String, List<MetadataArtist.Basic>>()
     private val channelFetches = HashMap<String, CompletableDeferred<PipedChannelInfo?>>()
     private val pages = PageDedupe()
+    private val artistMatch = MusicArtistMatch(client)
+
+    /** The YouTube Music artists behind radio [candidates], shared with Home so both reuse one name cache. */
+    internal suspend fun matchMusicArtists(candidates: List<MetadataArtist.Basic>, exclude: Set<String>) =
+        artistMatch.resolve(candidates, exclude)
+
+    /** Played artists as their YouTube Music artist, so Home lists the artist and not a video channel. */
+    internal suspend fun matchPlayedArtists(played: List<MetadataArtist.Basic>) = artistMatch.resolvePlayed(played)
 
     /** A failed fetch gives a blank-named artist that keeps [id], so the host never sees an empty id. */
     override suspend fun getArtist(id: String): MetadataArtist.Detailed =
@@ -215,18 +221,15 @@ internal class RealMetadataArtistAPI(
         val seeds = top().take(2).map { it.id }
         if (seeds.isEmpty()) return emptyList()
         // The radio request can fail (429/5xx); degrade to no section rather than blank the page.
-        val ranked = orNull("related artists $id") { rankRadioArtists(radio(seeds), setOf(key)) }.orEmpty()
-        if (ranked.isEmpty()) return emptyList()
-        // Radio rows carry no avatars; the channel fetch adds them, is shared per id and cached for hours.
-        val withAvatars = ranked.mapConcurrently { basic ->
-            val channel = orNull { fetchChannel(basic.id) }
-            if (channel != null && channel.name.isNotBlank()) channel.toArtist().toBasic() else basic
-        }
+        val ranked = orNull("related artists $id") { rankRadioArtists(radio(seeds), setOf(key), RADIO_CANDIDATES) }.orEmpty()
+        // The match also adds the avatars that radio rows lack.
+        val related = artistMatch.resolve(ranked, setOf(key))
+        if (related.isEmpty()) return emptyList()
         // Only a non-empty result is cached: an empty one is often a transient radio failure, and
         // caching it would hide the section until restart.
-        relatedCache[key] = withAvatars
+        relatedCache[key] = related
         if (relatedCache.size > RELATED_CACHE_SIZE) relatedCache.remove(relatedCache.keys.first())
-        return withAvatars
+        return related
     }
 
     private suspend fun artistAlbumsPage(

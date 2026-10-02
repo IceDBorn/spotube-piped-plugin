@@ -21,8 +21,8 @@ import kotlin.test.assertTrue
 class RelatedArtistsApiTest {
 
     private val artistId = "UCchannelalpha01a0000000"
-    private val betaId = "UCbeta000000000000000"
-    private val gammaId = "UCgamma00000000000000"
+    private val betaId = "UCbeta000000000000000000"
+    private val gammaId = "UCgamma00000000000000000"
     private val allIds = listOf(artistId, betaId, gammaId)
 
     private fun harness(http: FakeHttp, radio: suspend (List<String>) -> List<MetadataTrack>): RealMetadataArtistAPI {
@@ -35,7 +35,8 @@ class RelatedArtistsApiTest {
     }
 
     // The channel fixture carries 2 streams, so top10Tracks tops up from a music_songs search.
-    private fun fakeHttp() = FakeHttp().apply {
+    private fun fakeHttp(artists: String = artistSearch(betaId to betaId, gammaId to gammaId)) = FakeHttp().apply {
+        onPath("filter=music_artists", body = artists)
         onPath("/search", body = Fixtures.searchMusicSongs)
         for (id in allIds) onPath("/channel/$id", body = channelBody(id))
     }
@@ -70,23 +71,56 @@ class RelatedArtistsApiTest {
     }
 
     @Test
-    fun `avatars come from the channel fetch`() = runTest {
-        val http = fakeHttp()
-        val api = harness(http) { listOf(radioTrack(betaId)) }
+    fun `avatars come from the artist search`() = runTest {
+        val api = harness(fakeHttp()) { listOf(radioTrack(betaId)) }
         val related = api.artistOverview(artistId).relatedArtists.items.single()
-        assertEquals("https://piped.example/av.jpg", related.thumbnails.first().url)
+        assertEquals("https://piped.example/$betaId.jpg", related.thumbnails.first().url)
     }
 
     @Test
-    fun `a failed avatar fetch keeps the radio artist`() = runTest {
-        val http = FakeHttp().apply {
-            onPath("/search", body = Fixtures.searchMusicSongs)
-            // Registered first, so the radio artist's channel 500s while the page artist still resolves.
-            on({ it.contains(betaId) }, status = 500, body = "")
-            for (id in allIds) onPath("/channel/$id", body = channelBody(id))
-        }
+    fun `a radio uploader becomes the artist of the same name`() = runTest {
+        // A second channel of the artist uploads the video; the artist search returns the real one.
+        val http = fakeHttp(artistSearch("beta" to betaId))
+        val api = harness(http) { listOf(radioTrack("UCvideochannel0000000", "BETA")) }
+        assertEquals(listOf(betaId), api.artistOverview(artistId).relatedArtists.items.map { it.id })
+    }
+
+    @Test
+    fun `an uploader with no artist of that name is dropped`() = runTest {
+        val http = fakeHttp(artistSearch("Some Label Artist" to betaId))
+        val api = harness(http) { listOf(radioTrack("UClabel0000000000000", "Some Label"), radioTrack(gammaId)) }
+        assertTrue(api.artistOverview(artistId).relatedArtists.items.isEmpty())
+    }
+
+    @Test
+    fun `an uploader that is the page artist is dropped`() = runTest {
+        val http = fakeHttp(artistSearch("Alpha" to artistId, betaId to betaId))
+        val api = harness(http) { listOf(radioTrack("UCalphavideo000000000", "Alpha"), radioTrack(betaId)) }
+        assertEquals(listOf(betaId), api.artistOverview(artistId).relatedArtists.items.map { it.id })
+    }
+
+    @Test
+    fun `two uploaders of one artist give one row`() = runTest {
+        val http = fakeHttp(artistSearch("Beta" to betaId))
+        val api = harness(http) { listOf(radioTrack(betaId, "Beta"), radioTrack("UCbetavideo0000000000", "Beta - Topic")) }
+        assertEquals(listOf(betaId), api.artistOverview(artistId).relatedArtists.items.map { it.id })
+    }
+
+    @Test
+    fun `a failed artist search drops the artist`() = runTest {
+        // A blank body is a failed fetch.
+        val http = fakeHttp(artists = "")
         val api = harness(http) { listOf(radioTrack(betaId)) }
-        assertEquals(betaId, api.artistOverview(artistId).relatedArtists.items.single().id)
+        assertTrue(api.artistOverview(artistId).relatedArtists.items.isEmpty())
+    }
+
+    @Test
+    fun `a name is searched once`() = runTest {
+        val http = fakeHttp()
+        val api = harness(http) { listOf(radioTrack(betaId)) }
+        api.relatedArtists(artistId, null)
+        api.relatedArtists(gammaId, null)
+        assertEquals(1, http.countMatching("music_artists"))
     }
 
     @Test
@@ -180,4 +214,9 @@ class RelatedArtistsApiTest {
         val page = api.relatedArtists(artistId, PaginationStrategy.Offset(50, 50))
         assertTrue(page.items.isEmpty())
     }
+}
+
+/** A music_artists search body listing each (name, channel id) pair. */
+internal fun artistSearch(vararg artists: Pair<String, String>): String = artists.joinToString(",", """{"items":[""", "]}") { (name, id) ->
+    """{"type":"channel","url":"/channel/$id","name":"$name","thumbnail":"https://piped.example/$id.jpg","verified":true}"""
 }

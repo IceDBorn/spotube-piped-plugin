@@ -137,7 +137,8 @@ internal class RealMetadataBrowseAPI(
         // One seed per artist, so the radio sections do not all sound the same.
         val seeds = recent.distinctBy { it.artists.firstOrNull()?.id ?: it.id }.take(SEEDS)
         val savedArtistIds = mirror.allSavedArtistIds()
-        val topArtistIds = (history.topArtists(10).map { canonicalArtistId(it.id) } + savedArtistIds).distinct()
+        val played = artists.matchPlayedArtists(history.topArtists(10)).map { canonicalArtistId(it.id) }
+        val topArtistIds = (played + savedArtistIds).distinct()
         // Albums and playlists need a real channel id; "channel:Name" ids have none.
         val browsable = topArtistIds.filter { it.startsWith("UC") }.take(SEEDS)
 
@@ -196,13 +197,9 @@ internal class RealMetadataBrowseAPI(
 
     /** Piped has no related-artists API: take the artists of the radio mixes that the user does not play yet. */
     private suspend fun fansSection(seeds: List<MetadataTrack>, known: List<String>): MetadataBrowseSection {
-        val candidates = rankRadioArtists(seeds.flatMap { radioFor(it) }, known.toHashSet())
-        // Radio rows carry no artist avatars; the channel fetch adds them and is cached for hours.
-        // A failed avatar fetch keeps the radio row, which already has a real id and name.
-        val items = candidates.mapConcurrently { basic ->
-            orNull { artists.getArtist(basic.id) }?.takeIf { it.name.isNotBlank() }?.toBasic() ?: basic
-        }
-            .map { MetadataBrowseItem.Artist(it) }
+        val exclude = known.toHashSet()
+        val candidates = rankRadioArtists(seeds.flatMap { radioFor(it) }, exclude, RADIO_CANDIDATES)
+        val items = artists.matchMusicArtists(candidates, exclude).map { MetadataBrowseItem.Artist(it) }
         return MetadataBrowseSection(title = "Fans also like", description = null, items = items, moreLink = null)
     }
 

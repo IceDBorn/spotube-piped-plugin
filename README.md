@@ -61,9 +61,12 @@ Done on the form opened from Logout keeps the session without a check.
   reads, so history fills even when Piped is not the audio plugin, as long as the tracks come from Piped's
   metadata.
 - **Home, For you tab**: recently played, your artists, radio mixes from recent plays, similar artists, albums and
-  playlists of your most played artists, your playlists and saved albums.
+  playlists of your most played artists, your playlists and saved albums. Played artists go through the same
+  artist search as related artists, described below. If the search fails, the played artist stays as it is.
 - **Related artists**: artist pages and the Home "Fans also like" section list artists taken from YouTube Music
-  radio mixes, because Piped has no related-artists endpoint.
+  radio mixes, because Piped has no related-artists endpoint. A radio row names the channel that uploaded the
+  video, so each name goes through one artist search, cached by name until restart. The plugin lists the artist
+  whose name matches exactly and drops uploaders with no match, such as labels and fan channels.
 - **Home, Charts tab**: YouTube Music charts for your region, read from the playlists of the "YouTube Music Global
   Charts" channel, because Piped has no charts endpoint.
 

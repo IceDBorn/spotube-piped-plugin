@@ -12,6 +12,8 @@ import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationStra
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -71,6 +73,30 @@ class BrowseTest {
         isrcCode = null,
         externalUri = null,
     )
+
+    private val videoChannel = "UCvideochannel0000000000"
+    private val betaId = "UCbeta000000000000000000"
+
+    /** A play credited to [videoChannel], a second channel of the artist "Beta". */
+    private suspend fun Harness.playBetaVideo() {
+        history.record(track(1).copy(artists = listOf(MetadataArtist.Basic(videoChannel, "Beta", emptyList(), null))))
+        piped.channels[betaId] = "Beta - Topic"
+        piped.channels[videoChannel] = "Beta"
+    }
+
+    private fun Harness.serveArtistSearch(name: String, id: String) = piped.search(
+        "music_artists",
+        listOf(
+            buildJsonObject {
+                put("type", "channel")
+                put("url", "/channel/$id")
+                put("name", name)
+            },
+        ),
+    )
+
+    private suspend fun Harness.yourArtists(): List<String> = browse.list("for-you", null).items
+        .single { it.title == "Your artists" }.items.map { (it as MetadataBrowseItem.Artist).data.id }
 
     /** The fallback charts, the second of which fails to load. */
     private fun Harness.serveCharts() {
@@ -164,5 +190,50 @@ class BrowseTest {
         later.clock += 3 * 60_000L
         later.browse.list("for-you", PaginationStrategy.Offset(3, 3))
         assertTrue(later.piped.count("RDAMVM") > fetched)
+    }
+
+    @Test
+    fun `Your artists lists the artist behind a video channel`() = runTest {
+        val h = Harness(backgroundScope)
+        h.playBetaVideo()
+        h.serveArtistSearch("Beta", betaId)
+        assertEquals(listOf(betaId), h.yourArtists())
+    }
+
+    @Test
+    fun `More from reads the matched artist and not the video channel`() = runTest {
+        val h = Harness(backgroundScope)
+        h.playBetaVideo()
+        h.serveArtistSearch("Beta", betaId)
+        h.browse.list("for-you", null)
+        h.browse.list("for-you", PaginationStrategy.Offset(3, 3))
+        assertTrue(h.piped.count("/channel/$betaId") > 0)
+        assertEquals(0, h.piped.count("/channel/$videoChannel"))
+    }
+
+    @Test
+    fun `a played uploader with no artist of that name is left out`() = runTest {
+        val h = Harness(backgroundScope)
+        h.playBetaVideo()
+        h.serveArtistSearch("Someone Else", betaId)
+        assertTrue(h.browse.list("for-you", null).items.none { it.title == "Your artists" })
+    }
+
+    @Test
+    fun `a failed artist search keeps the played artist`() = runTest {
+        val h = Harness(backgroundScope)
+        h.playBetaVideo()
+        h.piped.override("music_artists", status = 500, body = "")
+        assertEquals(listOf(videoChannel), h.yourArtists())
+    }
+
+    @Test
+    fun `an artist name is searched once across Home pages`() = runTest {
+        val h = Harness(backgroundScope)
+        h.playBetaVideo()
+        h.serveArtistSearch("Beta", betaId)
+        h.browse.list("for-you", null)
+        h.browse.list("for-you", PaginationStrategy.Offset(3, 3))
+        assertEquals(1, h.piped.count("music_artists"))
     }
 }
