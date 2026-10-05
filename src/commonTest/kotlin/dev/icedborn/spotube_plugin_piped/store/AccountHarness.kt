@@ -11,15 +11,15 @@ import dev.icedborn.spotube_plugin_piped.metadata.AlbumLookup
 import kotlinx.coroutines.CoroutineScope
 
 /** The account side wired over a [FakePiped]: store, library, session and the mirror. */
-internal class AccountHarness(scope: CoroutineScope, val piped: FakePiped = FakePiped()) {
-    val storage = FakeStorage()
+internal class AccountHarness(scope: CoroutineScope, val piped: FakePiped = FakePiped(), val storage: FakeStorage = FakeStorage()) {
     val store = EntityStore(storage)
     val library = LocalLibrary(store)
     val session = AccountSession(store)
     val instance = InstanceSource(store, FAKE_INSTANCE)
     val client = PipedClient(piped) { FAKE_INSTANCE }
     val lookup = AlbumLookup(client, store)
-    val mirror = PipedSavedLibrary(piped, store, library, lookup, instance, scope) { session.load() }
+    val history = PlayHistory(store)
+    val mirror = PipedSavedLibrary(piped, store, library, lookup, instance, scope, history) { session.load() }
 
     suspend fun signIn(username: String = "ice") =
         session.save(PipedAccount(instance = FAKE_INSTANCE, username = username, token = "token-$username"))

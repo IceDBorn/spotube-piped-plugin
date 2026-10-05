@@ -51,7 +51,7 @@ private enum class SettingsFormResult { LoggedIn, InstanceOnly, Closed, LoggedOu
 private val coreLog = Logger("PipedCore")
 
 /** Piped needs no account for metadata; a per-instance account enables write-through saves to the
- * "Spotube - Albums/Artists/Favorites" playlists and an offline cache of the account state. */
+ * "Spotube - Albums/Artists/Favorites" playlists, the play history log and an offline cache of the account state. */
 internal class RealCoreAPI(
     private val httpClient: HttpClientAPI,
     private val storage: PersistedStorageAPI,
@@ -88,7 +88,7 @@ internal class RealCoreAPI(
             " of an instance from the TeamPiped list (github.com/TeamPiped/Piped/wiki/Instances)." +
             " Optionally give it a separate playback instance for audio." +
             " Scrobbles feed a play history on this device that drives the For you section of Home." +
-            " Log in on that instance to sync saved items to the account and keep an" +
+            " Log in on that instance to sync saved items and the play history to the account and keep an" +
             " offline cache on this device; without an account everything stays local." +
             " Source: https://github.com/IceDBorn/spotube-piped-plugin"
 

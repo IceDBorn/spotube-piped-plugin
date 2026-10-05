@@ -27,6 +27,8 @@ internal class ScrobbleHistory(
     private val store: EntityStore,
     /** Rebuilds a track from a Piped id on a cache miss. Null when the id is not one of ours. */
     private val fetchTrack: suspend (String) -> MetadataTrack?,
+    /** Gets every scrobbled play this device counted, for the account's history log. */
+    private val onPlay: suspend (MetadataTrack) -> Unit = {},
     /** Wall clock in epoch millis. A parameter so a test can move time without sleeping. */
     private val now: () -> Long = { epochMillis() },
 ) {
@@ -69,8 +71,9 @@ internal class ScrobbleHistory(
         val window = (full.durationMs.takeIf { it > 0 } ?: SCROBBLE_MATCH_WINDOW_MS) + SCROBBLE_MATCH_WINDOW_MS
         // The audio path's play stands in for this one only when it is the same listen. A track
         // resolved before the switch and played again much later is a real play of its own.
-        if (recordedAt != null && now() - recordedAt <= window) return
-        history.record(full)
+        val counted = (recordedAt != null && now() - recordedAt <= window) || history.record(full)
+        // The log gets a row for every play this device counted, whichever path counted it.
+        if (counted) onPlay(full)
     }
 
     /** The audio role's copy, then the entity store, then a fetch. A foreign id never reaches the fetch. */

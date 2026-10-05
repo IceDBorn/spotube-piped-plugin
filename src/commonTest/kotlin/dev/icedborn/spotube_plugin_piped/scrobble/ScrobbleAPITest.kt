@@ -30,10 +30,16 @@ class ScrobbleAPITest {
     private val fetched = mutableListOf<String>()
     private var fetch: (String) -> MetadataTrack? = { null }
     private var clock = 1_700_000_000_000L
-    private val scrobbles = ScrobbleHistory(history, store, { id ->
-        fetched += id
-        fetch(id)
-    }) { clock }
+    private val uploaded = mutableListOf<String>()
+    private val scrobbles = ScrobbleHistory(
+        history,
+        store,
+        fetchTrack = { id ->
+            fetched += id
+            fetch(id)
+        },
+        onPlay = { uploaded += it.id },
+    ) { clock }
     private val api = RealScrobbleAPI(scrobbles)
 
     private fun videoId(index: Int) = "vid" + index.toString().padStart(7, '0') + "0"
@@ -168,6 +174,30 @@ class ScrobbleAPITest {
         backdate(videoId(1), 30 * 60_000)
         api.scrobble(scrobbleOf(videoId(1)))
         assertEquals(2, playsOf(videoId(1)))
+    }
+
+    @Test
+    fun `a scrobble the device counts reaches the history log, and one inside the replay window does not`() = runTest {
+        fetch = { id -> track(9).copy(id = id) }
+        api.scrobble(scrobbleOf(videoId(9)))
+        api.scrobble(scrobbleOf(videoId(9)))
+        assertEquals(1, playsOf(videoId(9)))
+        assertEquals(listOf(videoId(9)), uploaded)
+    }
+
+    @Test
+    fun `a scrobble the audio role already counted still reaches the history log`() = runTest {
+        scrobbles.onAudioRequested(track(1))
+        api.scrobble(scrobbleOf(videoId(1)))
+        assertEquals(1, playsOf(videoId(1)))
+        assertEquals(listOf(videoId(1)), uploaded)
+    }
+
+    @Test
+    fun `an audio resolve and a foreign scrobble do not reach the history log`() = runTest {
+        scrobbles.onAudioRequested(track(1))
+        api.scrobble(scrobbleOf("spotify:track:4uLU6hMCjMI75M1A2tKUQC"))
+        assertEquals(emptyList(), uploaded)
     }
 
     @Test

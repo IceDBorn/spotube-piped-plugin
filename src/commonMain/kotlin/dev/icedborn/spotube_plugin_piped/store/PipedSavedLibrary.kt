@@ -6,6 +6,7 @@ import dev.icedborn.spotube_plugin_piped.core.InstanceSource
 import dev.icedborn.spotube_plugin_piped.core.PipedAccount
 import dev.icedborn.spotube_plugin_piped.metadata.AlbumLookup
 import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI
+import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlinx.coroutines.CoroutineScope
 
 /** The signed-in account's library: the cached snapshot, write-through of saves to the mirror playlists, and
@@ -18,6 +19,8 @@ internal class PipedSavedLibrary(
     instanceSource: InstanceSource,
     // Background refreshes run here; the plugin passes its main scope, tests their own.
     refreshScope: CoroutineScope,
+    // The plugin passes the instance its roles write to, because the write lock is per instance.
+    history: PlayHistory = PlayHistory(store),
     sessionProvider: suspend () -> PipedAccount?,
 ) {
     private val http = AccountHttp(httpClient)
@@ -25,10 +28,11 @@ internal class PipedSavedLibrary(
     private val representatives = Representatives(http, store, instanceSource)
     private val rows = AccountRows(http, store, refreshScope, sessionProvider)
     private val playlists = PlaylistMirror(http, store, library, bindings, sessionProvider)
+    private val historySync = HistorySync(http, store, bindings, history, refreshScope, sessionProvider)
     private val cache = AccountCache(
         http, store, library, instanceSource, bindings, rows, playlists,
         SavedSetResolver(store, bindings, albumLookup, representatives),
-        refreshScope, sessionProvider,
+        historySync, refreshScope, sessionProvider,
     )
     private val writer = MirrorWriter(
         http,
@@ -61,6 +65,9 @@ internal class PipedSavedLibrary(
     suspend fun refreshCache() = cache.refreshCache()
 
     suspend fun rowsFor(uuid: String, minRows: Int = 0): CachedRows = rows.rowsFor(uuid, minRows)
+
+    /** A play the host scrobbled, queued for the account's history log. */
+    suspend fun played(track: MetadataTrack) = historySync.onPlay(track)
 
     suspend fun save(kind: SavedKind, ids: List<String>) = writer.save(kind, ids)
 

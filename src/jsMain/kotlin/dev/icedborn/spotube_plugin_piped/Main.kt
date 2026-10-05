@@ -87,7 +87,8 @@ private suspend fun start() {
     migration.run()
     val client = PipedClient(httpClient) { instanceSource.requireApi() }
     val albumLookup = AlbumLookup(client, store)
-    val mirror = PipedSavedLibrary(httpClient, store, library, albumLookup, instanceSource, initScope) { session.load() }
+    val history = PlayHistory(store)
+    val mirror = PipedSavedLibrary(httpClient, store, library, albumLookup, instanceSource, initScope, history) { session.load() }
     // Bound by every host version; older hosts without it fall back to the Global charts.
     val systemInfo = runCatching { zipline.take<SystemInformationAPI>(SystemInformationAPI_SERVICE_NAME) }.getOrNull()
     val region = RegionSetting(store, systemInfo)
@@ -108,9 +109,8 @@ private suspend fun start() {
         coroutineScope = initScope,
     )
     zipline.bind<CoreAPI>(CoreAPI_SERVICE_NAME, core)
-    val history = PlayHistory(store)
     val trackApi = RealMetadataTrackAPI(client, store, library, mirror)
-    val scrobbles = ScrobbleHistory(history, store, fetchTrack = { id -> trackApi.getTrack(id) })
+    val scrobbles = ScrobbleHistory(history, store, fetchTrack = { id -> trackApi.getTrack(id) }, onPlay = { mirror.played(it) })
     val playback = PipedClient(httpClient) { instanceSource.playback() ?: instanceSource.requireApi() }
     zipline.bind<AudioAPI>(
         AudioAPI_SERVICE_NAME,

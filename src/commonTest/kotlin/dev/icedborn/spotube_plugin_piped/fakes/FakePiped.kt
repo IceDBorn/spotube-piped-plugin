@@ -26,7 +26,10 @@ fun vid(index: Int): String = "vid" + index.toString().padStart(7, '0') + "0"
  * Pages hold [pageSize] rows and continue through "p:<offset>" tokens. */
 class FakePiped(var pageSize: Int = 2) : HttpClientAPI {
 
-    class Playlist(val id: String, var name: String, val videos: MutableList<String>)
+    class Playlist(val id: String, var name: String, val videos: MutableList<String>) {
+        /** The stored position of the first row. Piped can leave it above 0 when an add interleaves with a removal. */
+        var firstPosition = 0
+    }
 
     val requests = mutableListOf<Pair<HttpMethod, String>>()
     val bodies = mutableListOf<Pair<String, String?>>()
@@ -45,6 +48,9 @@ class FakePiped(var pageSize: Int = 2) : HttpClientAPI {
 
     /** Video ids whose /streams answers 500. */
     val deadVideos = HashSet<String>()
+
+    /** Video ids a playlist add skips, the way Piped skips a video it cannot fetch from YouTube. */
+    val unfetchable = HashSet<String>()
     val channels = HashMap<String, String>()
     val users = HashMap<String, String>()
     var registrationOpen = true
@@ -243,15 +249,20 @@ class FakePiped(var pageSize: Int = 2) : HttpClientAPI {
             }
 
             "/user/playlists/add" -> {
-                val p = account[field("playlistId")] ?: return notFound()
-                (fields["videoIds"] as? JsonArray).orEmpty().forEach { p.videos += it.jsonPrimitive.content }
+                val p = account[field("playlistId")] ?: return ok("""{"error":"Playlist not found"}""")
+                val ids = (fields["videoIds"] as? JsonArray).orEmpty().map { it.jsonPrimitive.content }
+                val added = ids.filterNot { it in unfetchable }
+                if (ids.isNotEmpty() && added.isEmpty()) {
+                    return ok("""{"error":"Unable to add any videos, since they were unable to be fetched"}""")
+                }
+                p.videos += added
                 ok(done)
             }
 
             "/user/playlists/remove" -> {
                 val p = account[field("playlistId")] ?: return notFound()
-                val index = fields["index"]?.jsonPrimitive?.int ?: return notFound()
-                if (index !in p.videos.indices) return HttpResponse(400, emptyMap(), """{"error":"index"}""")
+                val index = (fields["index"]?.jsonPrimitive?.int ?: return notFound()) - p.firstPosition
+                if (index !in p.videos.indices) return ok("""{"error":"Video Index not found"}""")
                 p.videos.removeAt(index)
                 ok(done)
             }

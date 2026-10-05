@@ -42,7 +42,8 @@ nightly. To go back sooner, reinstall a stable build from the
 
 The **Login** tab is optional. Sign in to, or register on, the instance. Saved tracks, albums and artists then sync
 to the "Spotube - Favorites", "Spotube - Albums" and "Spotube - Artists" playlists on that account, and a copy stays
-on the device for offline use. Without an account, everything stays local.
+on the device for offline use. With Piped as the scrobble plugin, the play history syncs through a
+"Spotube - History" playlist, see [History sync](#history-sync). Without an account, everything stays local.
 
 While an account is signed in, the button on Piped reads Logout, and pressing it opens the same form on the
 Settings tab. The Login tab then shows who is signed in, with **Log out** and **Done**. Done closes the form and
@@ -59,7 +60,8 @@ Done on the form opened from Logout keeps the session without a check.
 - **Metadata**: tracks, albums, artists, playlists, search and a Home screen.
 - **Scrobbling**: takes the scrobble role and writes what Spotube Nightly reports into the play history that Home
   reads, so history fills even when Piped is not the audio plugin, as long as the tracks come from Piped's
-  metadata.
+  metadata. With an account signed in, the history syncs between your devices, see
+  [History sync](#history-sync).
 - **Home, For you tab**: recently played, your artists, radio mixes from recent plays, similar artists, albums and
   playlists of your most played artists, your playlists and saved albums. Played artists go through the same
   artist search as related artists, described below. If the search fails, the played artist stays as it is.
@@ -74,7 +76,7 @@ Done on the form opened from Logout keeps the session without a check.
 - **Home, Charts tab**: YouTube Music charts for your region, read from the playlists of the "YouTube Music Global
   Charts" channel, because Piped has no charts endpoint.
 
-Play history is local. The plugin keeps its own, from two sources:
+The plugin keeps its own play history on the device, from two sources:
 
 - **Scrobbles.** With Piped selected as the scrobble plugin, Spotube Nightly reports a play once a track has really
   played, after half its length or 240 seconds, whichever comes first. From the first such report on, the scrobbles
@@ -89,6 +91,34 @@ for the session only and is not stored. A scrobble for a track Piped cannot reso
 from another metadata plugin, is dropped and the audio role keeps feeding the history for it.
 
 Spotube Nightly caches Home until it restarts, so a region change shows up after a restart.
+
+### History sync
+
+With Piped as the scrobble plugin and an account signed in, the play history syncs between your devices through a
+"Spotube - History" playlist on the account. The playlist is a log. Every scrobbled play the device counts adds
+one row at its end. The device does not count a scrobble less than a minute after the last counted play of the
+same track, and such a scrobble adds no row. The plugin does not upload plays it counts from audio resolves alone,
+without a scrobble.
+
+- **New plays only.** The first scrobbled play creates the playlist. The plugin does not upload the history a
+  device had before, so that history stays on that device.
+- **Other devices.** Every account refresh reads the playlist. Each row another device added moves that track to
+  the top of the history and adds 1 to its count. A row holds no time, so the device orders the plays of other
+  devices by when it read them.
+- **First read.** The first time a device reads a filled playlist, the tracks it lacks go below its own history,
+  and a count only rises to the number of rows read. Devices do not share counts from before they joined, so two
+  devices can show different counts for the same track.
+- **Limits.** The playlist keeps 500 rows, and a refresh removes at most 20 of the oldest rows above that. Up to
+  300 plays wait on the device while it cannot reach the instance. The plugin tries a video the instance refuses 4
+  times, at least 6 hours apart, and then drops it from the upload. The play stays in the history of the device.
+
+Home shows the merged plays after a restart of Spotube Nightly, which caches Home until then.
+
+Library -> Playlists does not list the playlist. Like every Piped playlist, anyone who has its id can read it, and
+a plugin version from before this feature lists it as a normal playlist. Removing rows on the web, or deleting the
+playlist, does not clear the history on any device. The next scrobbled play creates a deleted playlist again, and
+the playlist then holds only the plays made from then on. The history on a device belongs to the device, not to
+an account, so plays merged from two accounts land in the same history.
 
 ### Audio streams
 
@@ -118,6 +148,13 @@ The account refresh runs at login, at start, and every 15 minutes while the app 
 time and reads at most 20 pages of each saved-items playlist; a longer one continues on the next refresh. Mapping
 the album and artist rows back to albums and artists runs in the background, with at most 40 lookup requests per
 list per refresh.
+
+The history log, see [History sync](#history-sync), costs 1 request per scrobbled play, the add. The first play
+after a start, or after an answer that proved nothing, also reads the playlist listing. A video the instance
+refuses costs one more listing when that upload had not read it. The first play on an account without the
+playlist costs the listing, the create and the add. Each refresh reads the playlist with 1 request. Above 500
+rows it also removes up to 20 rows at 1 request each, or up to 3 each once a write collision has left the first
+position without a row.
 
 Opening an album from a track waits up to 4 seconds for the album lookup, which costs at most 17 requests. After 4
 seconds the plugin shows a placeholder while the lookup finishes in the background, and opening the album again
@@ -187,8 +224,9 @@ sign-in and when a write to the account fails, so check a log before sharing it.
   form from that button, so while an account is signed in, the button reads Logout but opens the settings. To
   sign out, press **Log out** on the Login tab. Spotube Nightly also clears the plugin's web view data on every
   press, which does not affect the Piped session.
-- Spotube Nightly does not send scrobbles to plugins yet, so selecting Piped as the scrobble plugin has no effect
-  and play history keeps coming from the tracks the plugin resolves audio for, see [Features](#features).
+- Spotube Nightly sends scrobbles to plugins since its commit `fab60107` of 2 October 2026. On an older build,
+  selecting Piped as the scrobble plugin has no effect. Play history keeps coming from the tracks the plugin
+  resolves audio for, see [Features](#features), and the plugin uploads nothing to the history log.
 - Spotube Nightly does not ask plugins for updates yet, so the update channel has no effect and no update is
   offered in the app. To update, install from one of these URLs again:
   - stable: `https://github.com/IceDBorn/spotube-piped-plugin/releases/latest/download/spotube-plugin-piped.smplug`

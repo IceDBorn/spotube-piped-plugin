@@ -1,7 +1,7 @@
 # Design notes
 
-These notes cover the parts of the plugin whose rules span several files: the row cache, the storage keys, and
-the mirror index.
+These notes cover the parts of the plugin whose rules span several files: the row cache, the storage keys, the
+mirror index and the history log.
 
 ## Row cache
 
@@ -127,6 +127,9 @@ Eviction treats a key without an access stamp as used at the time of the evictio
 | `resolutionRetry:<kind>:<stamp>:<videoId>` | Failed resolutions in a row |
 | `unresolvable:<kind>:<stamp>:<videoId>` | Time a video was latched after 3 failures; cleared after 1 hour |
 | `saved.gone:<kind>:<stamp>` | Per mirror row, the ids an unsave confirmed while that row could not be mapped |
+| `history.playlist` | `StoredPlaylistId` of the history log, see below |
+| `history.pending` | `PendingPlays`: the plays waiting for upload and the ids uploaded since the last merge |
+| `history.seen` | `SeenLog`: the log rows this device has merged, for one account and playlist |
 
 Every binding carries the account it belongs to. A binding of another instance or username is ignored for writes,
 so switching accounts never writes into the previous account's playlists.
@@ -190,3 +193,92 @@ expires and a later lookup can then map that row to the unsaved id. `saved.gone:
 account and that row, the ids the unsave confirmed. A later resolution does not claim a recorded id from that row,
 but another row that maps to it, such as one added by a save on the web, still brings it back. A save on this
 device lifts the id, and a complete walk without the row drops the row's record.
+
+## History log
+
+With an account signed in, the play history syncs through one more account playlist, "Spotube - History". It is a
+log. `HistorySync` in `store/HistorySync.kt` adds one row at its end for every scrobbled play the device counted,
+so the row order is the play order. The pure rules are in `store/HistoryLog.kt`.
+
+### Uploads
+
+`ScrobbleHistory` hands a play to `HistorySync.onPlay` only when the device counted it, which means that
+`PlayHistory.record` returned true or the audio path had already counted the same listen. Signed out, the sync
+does not queue the play. Signed in, the play joins `history.pending`, which carries the account's stamp. The sync
+does not read a queue with another account's stamp, and the next write replaces it. The queue keeps the newest 300
+plays.
+
+One add request carries one video. Piped answers a batch add with success when it added any of the videos and
+skips the others without naming them, so only a single-video add tells which play landed. `postOutcome` sorts the
+answer three ways:
+
+- `CONFIRMED` is a JSON object without `error`. The play leaves the queue and its id joins `sent`.
+- `REFUSED` is an object with `error`. Piped answers 200 this way for a missing playlist and for a video it cannot
+  fetch. A run that has not read the listing reads it first, and a changed log id gets the play again. Otherwise
+  the play waits 6 hours, and the fourth refusal drops it. Three refusals in a row end the run.
+- `UNCLEAR` is anything else, such as no answer, a status that is not 2xx, `{}` or a body that is not an object.
+  The play stays queued and the run ends, because the add may have landed.
+
+An upload does not read the listing while `trusted`, the log id the listing last showed, equals the binding. It is
+unset at start and after an unclear answer. When the write of the queue fails after a confirmed add, uploads stop
+until the next start, because another run would send the same play again.
+
+### Log identity
+
+The log is the account playlist named "Spotube - History". When the listing shows several, every device takes the
+one with the smallest id, so two devices that created a log in the same moment settle on the same one. The rows of
+the other stay where they are. `history.playlist` binds the id to the account, and a changed id clears `sent`.
+
+### Joining a log
+
+The log carries only plays made after it exists. A device does not upload the history it had before, so that
+history stays on the device. A stored `history.seen` for the account and playlist marks the device as joined, and
+it decides how a merge reads new rows. A device that creates the log, or finds it without rows in the listing of
+an upload or in the walk of a refresh, stores a `history.seen` with no rows, so every row that follows is a new
+play. A device that first meets a filled log stores its `history.seen` at the first merge, which reads the rows as
+plays from before it joined. After a delete on the web, the next scrobbled play creates the log again under a new
+id, and it holds only the plays from then on.
+
+### Merges
+
+Every account refresh walks the log, keeps it out of `acct.state`, the row cache and the `track:` cache, and
+merges it when the walk proved the end:
+
+1. `appendedRows` finds the rows added since `history.seen`. The log only grows at its end, so the old rows are
+   the longest start of the walk that `history.seen` holds in the same order, whatever a trim removed in between.
+   A sequence of rows that repeats across a trim can hide new rows. The rule never counts a row twice.
+2. `withoutOwn` drops one row per id in `sent`, the rows this device added itself.
+3. The merge writes `history.seen` first, then clears `sent`, then writes `history.tracks`. A failure between the
+   writes loses the new plays instead of counting them twice.
+
+The merge rule depends on whether the device had a `history.seen` for the log:
+
+- With one, every new row is a play since the last merge. Each adds 1 to its track's count, and the tracks go on
+  top of the history, the newest row first.
+- Without one, the rows are plays from before the device joined. Tracks the device lacks go below its history, and
+  a count only rises to the number of rows read. Repeating this changes nothing, so a device that switches
+  accounts and comes back does not count the log again.
+
+An entry keeps the device's own `lastPlayedAt`, and a track new to the device gets 0. A merge is not a play on
+this device, and `lastPlayedAt` guards the replay window of `PlayHistory.record`. A merged track takes the device's
+copy, then the `track:` cache, then the log row.
+
+### Order of writes
+
+`syncLock` lets one upload run, merge or trim work at a time, and a merge that finds it taken does nothing. Every
+confirmed add bumps a generation counter. A refresh reads the counter before its walk and skips the merge when it
+changed, so a merge never reads an own row that `sent` does not hold yet. Every play sets a flag that makes a
+running upload go around once more.
+
+### Trim
+
+After a walk that proved the end and held more than 500 rows, the refresh removes the oldest row up to 20 times in
+the background and stops at the first removal the instance does not confirm. Then it uploads the waiting plays.
+Piped removes by stored position and refuses a position that holds no row. An add that overlapped a removal can
+leave position 0 without one, so the trim tries positions 1 and 2 after a refusal at position 0. With three empty
+positions at the head the trim finds no row, and the log grows past the cap.
+
+### Device history
+
+`history.tracks` is one history per device, not per account. The plays merged from two accounts land in the same
+history.

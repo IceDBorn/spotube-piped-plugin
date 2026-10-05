@@ -16,7 +16,7 @@ spotubePlugin {
     version = providers.gradleProperty("pluginVersion").getOrElse("0.0.1")
     apiVersion = "0.0.1"
     description =
-        "YouTube Music audio, metadata (tracks, albums, artists, playlists, search) and scrobbling to a local play history via a Piped instance you choose in the plugin settings (no default instance). Saved items sync to the account when online and stay cached on this device for offline use"
+        "YouTube Music audio, metadata (tracks, albums, artists, playlists, search) and scrobbling to a play history via a Piped instance you choose in the plugin settings (no default instance). Saved items and the play history sync to the account when online and stay cached on this device for offline use"
     author = "IceDBorn"
     capabilities = listOf(
         PluginCapability.NETWORK_REQUESTS,

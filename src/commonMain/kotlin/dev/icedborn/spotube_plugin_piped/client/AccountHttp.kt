@@ -37,12 +37,21 @@ internal fun JsonObject.string(name: String): String? = this[name]?.jsonPrimitiv
 
 internal fun listedCount(entry: JsonObject): Int? = entry.string("videos")?.toIntOrNull()
 
-/** Piped answers a throttled or failed mutation with 200 and '{}' or '{"error":…}', so only another object confirms. */
-internal fun postConfirmed(body: String?): Boolean {
-    if (body == null) return false
-    val obj = runCatching { json.parseToJsonElement(body) as? JsonObject }.getOrNull() ?: return false
-    return obj.isNotEmpty() && obj["error"] == null
+/** What a mutation's answer proves: the write landed, the instance refused it, or nothing either way. */
+internal enum class PostOutcome { CONFIRMED, REFUSED, UNCLEAR }
+
+/** Piped answers a throttled mutation with 200 and '{}' and a refused one with 200 and '{"error":…}'. */
+internal fun postOutcome(body: String?): PostOutcome {
+    val obj = body?.let { runCatching { json.parseToJsonElement(it) as? JsonObject }.getOrNull() } ?: return PostOutcome.UNCLEAR
+    return when {
+        obj["error"] != null -> PostOutcome.REFUSED
+        obj.isEmpty() -> PostOutcome.UNCLEAR
+        else -> PostOutcome.CONFIRMED
+    }
 }
+
+/** Only an object without an error confirms a mutation. */
+internal fun postConfirmed(body: String?): Boolean = postOutcome(body) == PostOutcome.CONFIRMED
 
 /** Requests against the signed-in account, and walks of its playlists. */
 internal class AccountHttp(private val httpClient: HttpClientAPI) {
@@ -94,12 +103,25 @@ internal class AccountHttp(private val httpClient: HttpClientAPI) {
         return postConfirmed(userPost(account, "/user/playlists/add", body.toString()))
     }
 
-    suspend fun removeRow(account: PipedAccount, playlistId: String, index: Int): Boolean {
+    /** Adds one video, so the answer is about that video alone. A batch add skips failed videos silently. */
+    suspend fun addVideo(account: PipedAccount, playlistId: String, videoId: String): PostOutcome {
+        val body = buildJsonObject {
+            put("playlistId", playlistId)
+            putJsonArray("videoIds") { add(videoId) }
+        }
+        return postOutcome(userPost(account, "/user/playlists/add", body.toString()))
+    }
+
+    suspend fun removeRow(account: PipedAccount, playlistId: String, index: Int): Boolean =
+        removeRowOutcome(account, playlistId, index) == PostOutcome.CONFIRMED
+
+    /** Removes the row at [index]. A refusal means the playlist has no row at that position. */
+    suspend fun removeRowOutcome(account: PipedAccount, playlistId: String, index: Int): PostOutcome {
         val body = buildJsonObject {
             put("playlistId", playlistId)
             put("index", index)
         }
-        return postConfirmed(userPost(account, "/user/playlists/remove", body.toString()))
+        return postOutcome(userPost(account, "/user/playlists/remove", body.toString()))
     }
 
     /** Walks an account playlist until the end or [pageLimit] pages. [onPage] gets each page and its leading row

@@ -44,6 +44,7 @@ internal class AccountCache(
     private val rows: AccountRows,
     private val playlistMirror: PlaylistMirror,
     private val resolver: SavedSetResolver,
+    private val historySync: HistorySync,
     private val refreshScope: CoroutineScope,
     private val sessionProvider: suspend () -> PipedAccount?,
 ) {
@@ -147,10 +148,17 @@ internal class AccountCache(
         // Only this account's snapshot is a baseline; another account's ids are never bound.
         val previous = store.cachedAccountState()?.takeIf { sameAccount(it, account) }
         val since = SavedKind.entries.associateWith { bindings.generation(it) }
+        val historySince = historySync.generation
+        val historyId = historySync.playlistIn(account, entries)
         val walks = attribute(account, entries).mapConcurrently(3) { listed ->
             val kind = listed.kind
-            val walk = if (kind != null) walkMirror(account, kind, listed.uuid, since.getValue(kind)) else http.walk(account, listed.uuid)
-            store.rememberTracks(walk.rows)
+            val walk = when {
+                listed.uuid == historyId -> http.walk(account, listed.uuid, pageLimit = MIRROR_PAGE_LIMIT)
+                kind != null -> walkMirror(account, kind, listed.uuid, since.getValue(kind))
+                else -> http.walk(account, listed.uuid)
+            }
+            // Log rows are not cached as tracks. A merge copies the ones it needs into the history.
+            if (listed.uuid != historyId) store.rememberTracks(walk.rows)
             listed to walk
         }
         // A switch to another account during the walks leaves its bindings and snapshot alone.
@@ -159,7 +167,13 @@ internal class AccountCache(
         val mirrorIds = mutableMapOf<SavedKind, List<String>>()
         // Per kind: true for a proven end, false for an ambiguous walk (the previous set is kept), absent for no mirror.
         val mirrorState = mutableMapOf<SavedKind, Boolean>()
+        var historyWalk: WalkResult? = null
         for ((listed, walk) in walks) {
+            // The history log stays out of the playlists, like the mirrors.
+            if (listed.uuid == historyId) {
+                historyWalk = walk.takeIf(::provenEnd)
+                continue
+            }
             val kind = listed.kind
             if (kind == null) {
                 rows.cacheWalk(listed.uuid, walk, listedCount(listed.entry) ?: -1)
@@ -180,6 +194,7 @@ internal class AccountCache(
         if (!stillSignedIn(account)) return
         val start = snapshot(account, playlists, previous, mirrorIds[SavedKind.TRACK].orEmpty().distinct(), mirrorState[SavedKind.TRACK])
         if (stillSignedIn(account)) playlistMirror.retryPending(account)
+        syncHistory(account, historyId, historyWalk, historySince)
         val ticket = ++resolveTicket
         refreshScope.launch {
             resolveMutex.withLock {
@@ -188,6 +203,15 @@ internal class AccountCache(
                 orNull("saved set resolution") { resolver.resolve(account, start, previous, mirrorIds, mirrorState) }
             }
         }
+    }
+
+    /** Merges a history log walked to its end, then trims it and retries the waiting plays in the background. */
+    private suspend fun syncHistory(account: PipedAccount, playlistId: String?, walk: WalkResult?, since: Int) {
+        if (playlistId != null && walk != null && stillSignedIn(account)) {
+            orNull("history merge") { historySync.merge(account, playlistId, walk, since) }
+        }
+        val excess = (walk?.rawIds?.size ?: 0) - HISTORY_LOG_CAP
+        refreshScope.launch { orNull("history sync") { historySync.settle(account, playlistId, excess) } }
     }
 
     private suspend fun stillSignedIn(account: PipedAccount): Boolean =

@@ -107,8 +107,8 @@ internal class RealMetadataPlaylistAPI(
     override suspend fun savedPlaylists(pagination: PaginationStrategy?): PaginationResult<MetadataPlaylist> {
         mirror.maybeRefresh()
         val paging = pagination.getOffsetOrDefault()
-        // Only user-visible playlists: created, cached account, and bookmarked. The internal sync mirrors
-        // ("Spotube - Albums/Artists/Favorites") stay hidden.
+        // Only user-visible playlists: created, cached account, and bookmarked. The internal sync playlists
+        // ("Spotube - Albums/Artists/Favorites/History") stay hidden.
         val created = library.storedPlaylists().map { it.toEntity() }
         val account = mirror.cachedState()?.playlists.orEmpty().map { it.toEntity() }
         val known = (created + account).distinctBy { it.id }
