@@ -84,6 +84,10 @@ Done on the form opened from Logout keeps the session without a check.
   artist. A row whose song is already cached, such as the seed from a song search, keeps the cached YouTube Music
   artist, and a channel named after that artist maps to it for the other rows, until restart. This costs no
   requests. Rows of unmapped channels keep the YouTube channel.
+- **Endless playback**: a mix mostly lists its seed's artist, so each batch takes at most 2 songs per artist. When
+  that leaves the batch short, the plugin reads the mixes of up to 2 songs by other artists in the first mix, 1
+  request each, and only then fills the rest with the extra songs of the artists already in it. Home and related
+  artists read the mix as it is.
 - **Home, Charts tab**: YouTube Music charts for your region, read from the playlists of the "YouTube Music Global
   Charts" channel, because Piped has no charts endpoint.
 

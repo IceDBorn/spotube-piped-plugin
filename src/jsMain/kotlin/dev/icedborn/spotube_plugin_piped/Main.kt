@@ -133,7 +133,7 @@ private fun bindMetadata(
     trackApi: RealMetadataTrackAPI,
 ) {
     val albumApi = RealMetadataAlbumAPI(client, store, library, mirror, albumLookup, initScope)
-    val artistApi = RealMetadataArtistAPI(client, store, library, mirror) { seeds -> trackApi.recommendationsBasedOnTracks(seeds, 50) }
+    val artistApi = RealMetadataArtistAPI(client, store, library, mirror) { seeds -> trackApi.radio(seeds, 50) }
     val playlistApi = RealMetadataPlaylistAPI(client, store, library, mirror, history, libraryPlaylist, initScope)
     val searchApi = RealMetadataSearchAPI(client, store)
     val browseApi = RealMetadataBrowseAPI(

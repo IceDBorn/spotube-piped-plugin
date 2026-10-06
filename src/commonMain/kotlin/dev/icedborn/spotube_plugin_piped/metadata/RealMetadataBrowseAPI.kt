@@ -54,7 +54,7 @@ internal class RealMetadataBrowseAPI(
 
     private val built = HashMap<String, Pair<Long, MetadataBrowseSection?>>()
     private val discovery = Discovery(
-        radio = { id -> tracks.recommendationsBasedOnTracks(listOf(id), ITEMS_PER_SECTION) },
+        radio = { id -> tracks.radio(listOf(id), ITEMS_PER_SECTION) },
         match = { candidates, exclude -> artists.matchMusicArtists(candidates, exclude) },
         albumsOf = { id -> artists.getArtistAlbums(id, null).items.map { it.toBasic() } },
         playlistsOf = { id -> artists.featuredPlaylists(id, null).items },

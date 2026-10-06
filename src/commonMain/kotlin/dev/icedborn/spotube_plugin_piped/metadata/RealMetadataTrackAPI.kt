@@ -66,20 +66,39 @@ internal class RealMetadataTrackAPI(
     override suspend fun recommendationsBasedOnTracks(seedTrackIds: List<String>, limit: Int): List<MetadataTrack> {
         if (seedTrackIds.isEmpty() || limit <= 0) return emptyList()
         return orNull("radio queue from ${seedTrackIds.first()}") {
+            val seeds = seedTrackIds.take(2)
+            val mixes = seeds.map { mix(it) }
+            val queue = ArtistSpread(limit, RADIO_PER_ARTIST, seeds + mixes.mapNotNull { it.seed?.id })
+            mixes.forEach { queue.offer(it.tracks) }
+            // A mix keeps close to its seed's artist, so the mixes of other artists' songs in it widen the queue.
+            val seedArtists = mixes.mapNotNullTo(HashSet()) { it.seed?.artistKey() }
+            val hops = mixes.flatMap { it.tracks }.filter { it.artistKey() !in seedArtists }.distinctBy { it.artistKey() }
+            for (hop in hops.take(RADIO_HOPS)) {
+                if (queue.full) break
+                queue.offer(mix(hop.id).tracks)
+            }
+            if (!queue.filled) queue.offer(ytmCatalogTracks(seeds.first()))
+            queue.result().onEach { store.rememberTrack(it) }
+        } ?: emptyList()
+    }
+
+    /** Radio rows of [seedTrackIds] in mix order, without the artist spread, since Home and related artists rank
+     * artists by how often a mix lists them. */
+    suspend fun radio(seedTrackIds: List<String>, limit: Int): List<MetadataTrack> {
+        if (seedTrackIds.isEmpty() || limit <= 0) return emptyList()
+        return orNull("radio from ${seedTrackIds.first()}") {
             val out = LinkedHashMap<String, MetadataTrack>()
-            // The queue stays on YouTube Music, so it reads the radio mix playlist, not the plain related list.
             for (seed in seedTrackIds.take(2)) {
                 if (out.size >= limit) break
-                val mixSeed = songSeed(seed)
-                for (track in mixArtists.tracks(ytmRadioItems(mixSeed))) {
-                    if (track.id == seed || track.id == mixSeed || out.containsKey(track.id)) continue
+                for (track in mix(seed).tracks) {
+                    if (track.id == seed || out.containsKey(track.id)) continue
                     out[track.id] = track
                     store.rememberTrack(track)
                     if (out.size >= limit) break
                 }
             }
             // Thin radio: top up with the seed artist's music_songs catalog.
-            if (out.size < limit && seedTrackIds.isNotEmpty()) {
+            if (out.size < limit) {
                 for (track in ytmCatalogTracks(seedTrackIds.first())) {
                     if (out.containsKey(track.id)) continue
                     out[track.id] = track
@@ -89,6 +108,15 @@ internal class RealMetadataTrackAPI(
             }
             out.values.toList()
         } ?: emptyList()
+    }
+
+    private class Mix(val seed: MetadataTrack?, val tracks: List<MetadataTrack>)
+
+    // The queue stays on YouTube Music, so it reads the radio mix playlist, not the plain related list.
+    private suspend fun mix(seed: String): Mix {
+        val mixSeed = songSeed(seed)
+        val tracks = mixArtists.tracks(ytmRadioItems(mixSeed))
+        return Mix(tracks.firstOrNull { it.id == mixSeed }, tracks.filter { it.id != mixSeed && it.id != seed })
     }
 
     /** A mix seeded from a video lists videos, so a seed that looks like one is swapped for its song. Only a

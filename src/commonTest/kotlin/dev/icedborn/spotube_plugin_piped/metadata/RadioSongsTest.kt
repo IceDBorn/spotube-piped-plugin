@@ -142,4 +142,35 @@ class RadioSongsTest {
         assertEquals("The Band", store.cachedTrack(vid(1))?.artists?.single()?.name)
         assertEquals(1, piped.total)
     }
+
+    private fun mixBody(rows: List<JsonObject>) = buildJsonObject {
+        put("name", "Mix")
+        put("nextpage", null as String?)
+        put("relatedStreams", JsonArray(rows))
+    }.toString()
+
+    private fun channel(name: String) = "UC" + name.padEnd(22, '0')
+
+    private fun artistRow(index: Int, artist: String) = mixRow(vid(index), artist, channel(artist))
+
+    @Test
+    fun `endless playback spreads a batch across artists`() = runTest {
+        val piped = FakePiped(pageSize = 50)
+        val band = (0..4).map { artistRow(it, "band") }
+        piped.override("RDAMVM${vid(0)}", body = mixBody(band + artistRow(5, "bee") + artistRow(6, "cee")))
+        piped.override("RDAMVM${vid(5)}", body = mixBody(listOf(artistRow(5, "bee"), artistRow(7, "dee"), artistRow(8, "eee"))))
+        val queue = trackApi(piped).recommendationsBasedOnTracks(listOf(vid(0)), 6)
+        // Two songs of the band, then the other artists, then the mix of the first other artist's song.
+        assertEquals(listOf(1, 2, 5, 6, 7, 8).map(::vid), queue.map { it.id })
+        assertEquals(2, piped.total)
+    }
+
+    @Test
+    fun `a band's other songs fill a batch no other artist could`() = runTest {
+        val piped = FakePiped(pageSize = 50)
+        piped.override("RDAMVM${vid(0)}", body = mixBody((0..4).map { artistRow(it, "band") }))
+        val queue = trackApi(piped).recommendationsBasedOnTracks(listOf(vid(0)), 4)
+        assertEquals(listOf(1, 2, 3, 4).map(::vid), queue.map { it.id })
+        assertEquals(1, piped.total)
+    }
 }
