@@ -135,6 +135,7 @@ private fun bindMetadata(
     val albumApi = RealMetadataAlbumAPI(client, store, library, mirror, albumLookup, initScope)
     val artistApi = RealMetadataArtistAPI(client, store, library, mirror) { seeds -> trackApi.recommendationsBasedOnTracks(seeds, 50) }
     val playlistApi = RealMetadataPlaylistAPI(client, store, library, mirror, history, libraryPlaylist, initScope)
+    val searchApi = RealMetadataSearchAPI(client, store)
     val browseApi = RealMetadataBrowseAPI(
         library = library,
         mirror = mirror,
@@ -145,8 +146,9 @@ private fun bindMetadata(
         artists = artistApi,
         albums = albumApi,
         playlists = playlistApi,
+        search = searchApi,
     )
-    zipline.bind<MetadataSearchAPI>(MetadataSearchAPI_SERVICE_NAME, RealMetadataSearchAPI(client, store))
+    zipline.bind<MetadataSearchAPI>(MetadataSearchAPI_SERVICE_NAME, searchApi)
     zipline.bind<MetadataTrackAPI>(MetadataTrackAPI_SERVICE_NAME, trackApi)
     zipline.bind<MetadataAlbumAPI>(MetadataAlbumAPI_SERVICE_NAME, albumApi)
     zipline.bind<MetadataArtistAPI>(MetadataArtistAPI_SERVICE_NAME, artistApi)

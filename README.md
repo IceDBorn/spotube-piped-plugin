@@ -62,9 +62,16 @@ Done on the form opened from Logout keeps the session without a check.
   reads, so history fills even when Piped is not the audio plugin, as long as the tracks come from Piped's
   metadata. With an account signed in, the history syncs between your devices, see
   [History sync](#history-sync).
-- **Home, For you tab**: recently played, your artists, radio mixes from recent plays, similar artists, albums and
-  playlists of your most played artists, your playlists and saved albums. Played artists go through the same
-  artist search as related artists, described below. If the search fails, the played artist stays as it is.
+- **Home, For you tab**: recently played, your artists, radio mixes from recent plays, similar artists, new songs,
+  albums and playlists of those similar artists, albums and playlists of your most played artists, your playlists
+  and saved albums. Played artists go through the same artist search as related artists, described below. If the
+  search fails, the played artist stays as it is.
+- **Home discovery**: "New songs for you", "Albums you might like", "Playlists you might like" and "Playlists for
+  fans of" list music by the "Fans also like" artists. New songs reuse the radio mixes and cost no requests. The
+  album and playlist rows read the top 4 of those artists, and each costs 1 channel fetch, shared with artist
+  pages, plus 1 album search and 1 playlist search. "Playlists for fans of" costs 1 YouTube Music playlist search
+  for each of the top 2 artists. Home keeps a section for 30 minutes, so scrolling all of For you costs at most 14
+  more requests in that time.
 - **Related artists**: artist pages and the Home "Fans also like" section list artists taken from YouTube Music
   radio mixes, because Piped has no related-artists endpoint. A radio row names the channel that uploaded the
   video, so each name goes through one artist search, cached by name until restart. The plugin lists the artist

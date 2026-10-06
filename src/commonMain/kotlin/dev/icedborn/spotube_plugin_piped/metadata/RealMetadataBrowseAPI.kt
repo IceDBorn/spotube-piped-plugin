@@ -33,9 +33,6 @@ private const val SECTION_TTL_MS = 30 * 60_000L
 /** A section that failed or came back empty is retried after this, not after the full TTL. */
 private const val FAILED_SECTION_TTL_MS = 2 * 60_000L
 
-/** A radio is reused by the sections built within this long of its fetch. */
-private const val RADIO_REUSE_MS = 2 * 60_000L
-
 /** One Home section, built only when the host scrolls to it. */
 private class SectionSpec(val key: String, val build: suspend () -> MetadataBrowseSection?)
 
@@ -51,11 +48,19 @@ internal class RealMetadataBrowseAPI(
     private val artists: RealMetadataArtistAPI,
     private val albums: RealMetadataAlbumAPI,
     private val playlists: RealMetadataPlaylistAPI,
+    private val search: RealMetadataSearchAPI,
     private val now: () -> Long = ::epochMillis,
 ) : MetadataBrowseAPI {
 
     private val built = HashMap<String, Pair<Long, MetadataBrowseSection?>>()
-    private val radios = HashMap<String, Pair<Long, List<MetadataTrack>>>()
+    private val discovery = Discovery(
+        radio = { id -> tracks.recommendationsBasedOnTracks(listOf(id), ITEMS_PER_SECTION) },
+        match = { candidates, exclude -> artists.matchMusicArtists(candidates, exclude) },
+        albumsOf = { id -> artists.getArtistAlbums(id, null).items.map { it.toBasic() } },
+        playlistsOf = { id -> artists.featuredPlaylists(id, null).items },
+        searchPlaylists = { query -> search.searchPlaylists(query, null).items.map { it.data } },
+        now = now,
+    )
 
     override suspend fun featured(): List<MetadataBrowseItem> = orNull {
         // The carousel shows albums and playlists only (it drops artists and ignores taps on tracks).
@@ -149,13 +154,20 @@ internal class RealMetadataBrowseAPI(
         for (i in 0 until maxOf(seeds.size, browsable.size)) {
             seeds.getOrNull(i)?.let { seed -> specs += SectionSpec("radio:${seed.id}") { radioSection(seed) } }
             browsable.getOrNull(i)?.let { id -> specs += SectionSpec("albums:$id") { moreFromSection(id) } }
-            if (i == 0) specs += SectionSpec("fans") { fansSection(seeds, topArtistIds) }
+            if (i == 0) {
+                specs += SectionSpec("fans") { fansSection(seeds, topArtistIds) }
+                specs += SectionSpec("new-songs") { newSongsSection(seeds, topArtistIds) }
+            }
             browsable.getOrNull(i)?.let { id -> specs += SectionSpec("playlists:$id") { artistPlaylistsSection(id) } }
             if (i == 0) {
                 specs += SectionSpec("your-playlists") { yourPlaylistsSection() }
                 specs += SectionSpec("saved-albums") { savedAlbumsSection() }
+                specs += SectionSpec("albums-like") { albumsLikeSection(seeds, topArtistIds) }
+                specs += SectionSpec("playlists-like") { playlistsLikeSection(seeds, topArtistIds) }
             }
         }
+        // Last, so its searches run only when the user scrolls this far.
+        if (seeds.isNotEmpty()) specs += SectionSpec("playlists-search") { searchedPlaylistsSection(seeds, topArtistIds) }
         if (seeds.isEmpty() && browsable.isEmpty()) {
             specs += SectionSpec("your-playlists") { yourPlaylistsSection() }
             specs += SectionSpec("saved-albums") { savedAlbumsSection() }
@@ -178,29 +190,43 @@ internal class RealMetadataBrowseAPI(
         return MetadataBrowseSection(title = "Your artists", description = null, items = items, moreLink = null)
     }
 
-    // Shared only by sections built within a short window, so a section never outlives SECTION_TTL_MS by much.
-    // A failed radio reads as empty and is not kept.
-    private suspend fun radioFor(seed: MetadataTrack): List<MetadataTrack> {
-        radios.entries.removeAll { now() - it.value.first >= RADIO_REUSE_MS }
-        radios[seed.id]?.let { return it.second }
-        val radio = orNull { tracks.recommendationsBasedOnTracks(listOf(seed.id), ITEMS_PER_SECTION) }.orEmpty()
-        if (radio.isNotEmpty()) radios[seed.id] = now() to radio
-        return radio
-    }
-
     private suspend fun radioSection(seed: MetadataTrack) = MetadataBrowseSection(
         title = seed.title,
         description = "Because you listened to",
-        items = radioFor(seed).map { MetadataBrowseItem.Track(it) },
+        items = discovery.radioFor(seed).map { MetadataBrowseItem.Track(it) },
         moreLink = null,
     )
 
     /** Piped has no related-artists API: take the artists of the radio mixes that the user does not play yet. */
     private suspend fun fansSection(seeds: List<MetadataTrack>, known: List<String>): MetadataBrowseSection {
-        val exclude = known.toHashSet()
-        val candidates = rankRadioArtists(seeds.flatMap { radioFor(it) }, exclude, RADIO_CANDIDATES)
-        val items = artists.matchMusicArtists(candidates, exclude).map { MetadataBrowseItem.Artist(it) }
+        val items = discovery.newArtists(seeds, known).map { MetadataBrowseItem.Artist(it) }
         return MetadataBrowseSection(title = "Fans also like", description = null, items = items, moreLink = null)
+    }
+
+    private suspend fun newSongsSection(seeds: List<MetadataTrack>, known: List<String>): MetadataBrowseSection {
+        val newArtists = discovery.newArtists(seeds, known)
+        val items = discovery.newSongs(seeds, newArtists).map { MetadataBrowseItem.Track(it) }
+        return MetadataBrowseSection(title = "New songs for you", description = null, items = items, moreLink = null)
+    }
+
+    private suspend fun albumsLikeSection(seeds: List<MetadataTrack>, known: List<String>): MetadataBrowseSection {
+        val newArtists = discovery.newArtists(seeds, known)
+        val items = discovery.albumsBy(newArtists).map { MetadataBrowseItem.Album(it) }
+        return MetadataBrowseSection(title = "Albums you might like", description = null, items = items, moreLink = null)
+    }
+
+    private suspend fun playlistsLikeSection(seeds: List<MetadataTrack>, known: List<String>): MetadataBrowseSection {
+        val newArtists = discovery.newArtists(seeds, known)
+        val items = discovery.playlistsBy(newArtists).map { MetadataBrowseItem.Playlist(it) }
+        return MetadataBrowseSection(title = "Playlists you might like", description = null, items = items, moreLink = null)
+    }
+
+    private suspend fun searchedPlaylistsSection(seeds: List<MetadataTrack>, known: List<String>): MetadataBrowseSection? {
+        val newArtists = discovery.newArtists(seeds, known)
+        if (newArtists.isEmpty()) return null
+        val items = discovery.playlistsSearchedFor(newArtists).map { MetadataBrowseItem.Playlist(it) }
+        val names = newArtists.take(SEARCH_ARTISTS).joinToString(", ") { it.name }
+        return MetadataBrowseSection(title = names, description = "Playlists for fans of", items = items, moreLink = null)
     }
 
     private suspend fun moreFromSection(artistId: String): MetadataBrowseSection? {

@@ -8,10 +8,12 @@ import dev.icedborn.spotube_plugin_piped.store.AccountHarness
 import dev.icedborn.spotube_plugin_piped.store.PlayHistory
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.artist.MetadataArtist
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.browse.MetadataBrowseItem
+import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.browse.MetadataBrowseSection
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlin.test.Test
@@ -55,6 +57,7 @@ class BrowseTest {
             artists = artists,
             albums = albums,
             playlists = playlists,
+            search = RealMetadataSearchAPI(account.client, store),
             now = { clock },
         )
     }
@@ -94,6 +97,43 @@ class BrowseTest {
             },
         ),
     )
+
+    private val gammaId = "UCgamma00000000000000000"
+
+    private fun gammaRow(videoId: String) = buildJsonObject {
+        put("type", "stream")
+        put("url", "/watch?v=$videoId")
+        put("title", "Song $videoId")
+        put("uploaderName", "Gamma")
+        put("uploaderUrl", "/channel/$gammaId")
+        put("duration", 200)
+    }
+
+    /** Every radio lists three Gamma songs, and Gamma has one album, one own playlist and one fan playlist. */
+    private fun Harness.serveGamma() {
+        val mix = buildJsonObject {
+            put("name", "Mix")
+            put("nextpage", null as String?)
+            put("relatedStreams", JsonArray((11..13).map { gammaRow(vid(it)) }))
+        }
+        piped.override("RDAMVM", body = mix.toString())
+        piped.channels[gammaId] = "Gamma"
+        serveArtistSearch("Gamma", gammaId)
+        piped.search("filter=music_albums", listOf(piped.albumRow("OLAKgamma1", "Gamma Album", "Gamma")))
+        piped.search("filter=playlists", listOf(piped.albumRow("PLgammaown", "Gamma Hits", "Gamma")))
+        piped.search("filter=music_playlists", listOf(piped.albumRow("PLgammafans", "Gamma Radio", "Someone")))
+    }
+
+    private suspend fun Harness.allForYou(): List<MetadataBrowseSection> {
+        val out = mutableListOf<MetadataBrowseSection>()
+        var page = browse.list("for-you", null)
+        out += page.items
+        while (page.nextPagination != null) {
+            page = browse.list("for-you", page.nextPagination)
+            out += page.items
+        }
+        return out
+    }
 
     private suspend fun Harness.yourArtists(): List<String> = browse.list("for-you", null).items
         .single { it.title == "Your artists" }.items.map { (it as MetadataBrowseItem.Artist).data.id }
@@ -235,5 +275,44 @@ class BrowseTest {
         h.browse.list("for-you", null)
         h.browse.list("for-you", PaginationStrategy.Offset(3, 3))
         assertEquals(1, h.piped.count("music_artists"))
+    }
+
+    @Test
+    fun `For you lists songs, albums and playlists of the new artists`() = runTest {
+        val h = Harness(backgroundScope)
+        h.history.record(track(1))
+        h.serveGamma()
+        val sections = h.allForYou()
+        fun items(title: String) = sections.single { it.title == title }.items
+        assertEquals((11..13).map { vid(it) }, items("New songs for you").map { (it as MetadataBrowseItem.Track).data.id })
+        assertEquals(listOf("OLAKgamma1"), items("Albums you might like").map { (it as MetadataBrowseItem.Album).data.id })
+        assertEquals(listOf("PLgammaown"), items("Playlists you might like").map { (it as MetadataBrowseItem.Playlist).data.id })
+        val fans = sections.single { it.description == "Playlists for fans of" }
+        assertEquals("Gamma", fans.title)
+        assertEquals(listOf("PLgammafans"), fans.items.map { (it as MetadataBrowseItem.Playlist).data.id })
+    }
+
+    @Test
+    fun `the discovery rows cost one channel fetch and one search of each kind`() = runTest {
+        val h = Harness(backgroundScope)
+        h.history.record(track(1))
+        h.serveGamma()
+        h.allForYou()
+        assertEquals(1, h.piped.count("RDAMVM"))
+        assertEquals(1, h.piped.count("/channel/$gammaId"))
+        assertEquals(1, h.piped.count("filter=music_albums"))
+        assertEquals(1, h.piped.count("filter=playlists"))
+        assertEquals(1, h.piped.count("filter=music_playlists"))
+    }
+
+    @Test
+    fun `a failed playlist search drops only its own row`() = runTest {
+        val h = Harness(backgroundScope)
+        h.history.record(track(1))
+        h.serveGamma()
+        h.piped.override("filter=music_playlists", status = 500, body = "")
+        val sections = h.allForYou()
+        assertTrue(sections.none { it.description == "Playlists for fans of" })
+        assertTrue(sections.any { it.title == "Albums you might like" })
     }
 }
