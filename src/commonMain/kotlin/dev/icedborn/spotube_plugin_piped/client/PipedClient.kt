@@ -47,7 +47,8 @@ internal class PipedClient(private val httpClient: HttpClientAPI, private val ba
     suspend fun streamsForMetadata(videoId: String): PipedStreamsInfo? =
         decodeKeyed(get("/streams/${videoId.percentEncoded()}"), "relatedStreams", "streams $videoId")
 
-    /** Only 403/404 refuse the URL; other non-2xx is null. HEAD because the proxy ignores `Range`. */
+    /** 403/404 refuse the URL; a 2xx serves it only with an audio or video Content-Type, the rest is null.
+     * HEAD because the proxy ignores `Range` and a GET would download the whole file. */
     suspend fun servesMediaUrl(url: String): Boolean? {
         val response = httpClient.request(
             method = HttpMethod.Head,
@@ -55,8 +56,10 @@ internal class PipedClient(private val httpClient: HttpClientAPI, private val ba
             requestHeaders = null,
             body = null,
         )
+        val contentType = response.headers.entries.firstOrNull { it.key.equals("Content-Type", ignoreCase = true) }?.value
+        val isMedia = contentType != null && (contentType.startsWith("audio/", true) || contentType.startsWith("video/", true))
         return when (response.statusCode) {
-            in 200..299 -> true
+            in 200..299 -> if (isMedia) true else null
             403, 404 -> false
             else -> null
         }

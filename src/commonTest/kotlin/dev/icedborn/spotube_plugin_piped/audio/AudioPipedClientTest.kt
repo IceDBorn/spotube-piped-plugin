@@ -150,7 +150,7 @@ class AudioPipedClientTest {
     fun `a working audio list is used as it always was and the muxed row is never probed`() = runTest {
         val http = FakeHttp().apply {
             onPath("/streams/", body = refusedBody)
-            onPath("/audio/", body = "audio")
+            onPath("/audio/", body = "audio", contentType = "audio/webm")
             onPath("/video/18", body = "mp4")
         }
         val stream = assertNotNull(sourceApi(http).getStreamsOfAudioSource(basicSource()).single())
@@ -166,6 +166,7 @@ class AudioPipedClientTest {
             val http = FakeHttp().apply {
                 onPath("/streams/", body = refusedBody)
                 onPath("/audio/251", status = status, body = "")
+                // No Content-Type, so the second row has no verdict either and nothing is proved.
                 onPath("/audio/140", body = "audio")
                 onPath("/video/18", body = "mp4")
             }
@@ -173,10 +174,28 @@ class AudioPipedClientTest {
                 sourceApi(http).getStreamsOfAudioSource(basicSource()).single(),
                 "status $status should not drop the row",
             )
-            // Only 403/404 is a statement about the URL, so a blip keeps the row and the audio path is used.
+            // Only 403/404 is a statement about the URL, so a blip keeps the row, and an inconclusive
+            // verdict sends the probe to the rest before the rows are offered.
             assertEquals("https://piped.example/audio/251", stream.streams.first().url, "status $status")
+            assertEquals(2, stream.streams.size, "status $status should keep both rows")
+            assertEquals(2, http.countMatching("/audio/"), "status $status should probe the rest")
             assertEquals(0, http.countMatching("/video/"), "status $status should not need the fallback")
         }
+    }
+
+    @Test
+    fun `a blip on the richest row drops it once another row proves served`() = runTest {
+        val http = FakeHttp().apply {
+            onPath("/streams/", body = refusedBody)
+            onPath("/audio/251", status = 429, body = "")
+            onPath("/audio/140", body = "audio", contentType = "audio/mp4")
+            onPath("/video/18", body = "mp4")
+        }
+        val stream = assertNotNull(sourceApi(http).getStreamsOfAudioSource(basicSource()).single())
+        // The host picks one row and has no failover, so an unproved URL never competes with a serving one.
+        assertEquals(listOf("https://piped.example/audio/140"), stream.streams.map { it.url })
+        assertEquals(2, http.countMatching("/audio/"))
+        assertEquals(0, http.countMatching("/video/"))
     }
 
     @Test
@@ -195,16 +214,65 @@ class AudioPipedClientTest {
     }
 
     @Test
-    fun `probes are HEAD requests, since the proxy ignores Range and a GET fetches the whole body`() = runTest {
+    fun `probes are HEADs with Content-Type check`() = runTest {
         val http = FakeHttp().apply {
             onPath("/streams/", body = refusedBody)
             onPath("/audio/", status = 403, body = "")
             onPath("/video/18", body = "mp4")
         }
         sourceApi(http).getStreamsOfAudioSource(basicSource())
-        val probes = http.methods.filter { !it.second.contains("/streams/") }
+        val probes = http.methods.zip(http.headers).filter { !it.first.second.contains("/streams/") }
+        val probeHeaders = probes.map { it.second }
         assertEquals(3, probes.size)
-        assertTrue(probes.all { it.first == HttpMethod.Head }, "probes: $probes")
+        assertTrue(probes.all { it.first.first == HttpMethod.Head }, "probes: $probes")
+        assertTrue(probeHeaders.all { it == null }, "headers: $probeHeaders")
+    }
+
+    @Test
+    fun `a 206 with an audio Content-Type is served, so only the richest row is probed`() = runTest {
+        val http = FakeHttp().apply {
+            onPath("/streams/", body = refusedBody)
+            onPath("/audio/251", status = 206, body = "", contentType = "audio/webm")
+            onPath("/audio/", status = 403, body = "")
+            onPath("/video/18", status = 403, body = "")
+        }
+        val stream = assertNotNull(sourceApi(http).getStreamsOfAudioSource(basicSource()).single())
+        assertEquals(2, stream.streams.size)
+        assertEquals(1, http.countMatching("/audio/"))
+        assertEquals(0, http.countMatching("/video/"))
+    }
+
+    @Test
+    fun `a 429 and a 500 are inconclusive, so the next row gets probed`() = runTest {
+        val http = FakeHttp().apply {
+            onPath("/streams/", body = refusedBody)
+            onPath("/audio/251", status = 429, body = "")
+            onPath("/audio/140", status = 500, body = "")
+            onPath("/video/18", body = "mp4", contentType = "audio/mp4")
+        }
+        val stream = assertNotNull(sourceApi(http).getStreamsOfAudioSource(basicSource()).single())
+        // No verdict served anything, so the unknown rows are offered and the muxed fallback is untouched.
+        assertEquals(
+            listOf("https://piped.example/audio/251", "https://piped.example/audio/140"),
+            stream.streams.map { it.url },
+        )
+        assertEquals(2, http.countMatching("/audio/"))
+        assertEquals(0, http.countMatching("/video/"))
+    }
+
+    @Test
+    fun `a 200 whose Content-Type is not media is inconclusive, so the next row is probed`() = runTest {
+        val http = FakeHttp().apply {
+            onPath("/streams/", body = refusedBody)
+            onPath("/audio/251", body = "<html>gone</html>", contentType = "text/html")
+            onPath("/audio/140", status = 206, body = "", contentType = "audio/mp4")
+            onPath("/video/18", status = 403, body = "")
+        }
+        val stream = assertNotNull(sourceApi(http).getStreamsOfAudioSource(basicSource()).single())
+        // text/html at 200 proves nothing: only the row the instance answered with media is offered.
+        assertEquals(listOf("https://piped.example/audio/140"), stream.streams.map { it.url })
+        assertEquals(2, http.countMatching("/audio/"))
+        assertEquals(0, http.countMatching("/video/"))
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -218,7 +286,7 @@ class AudioPipedClientTest {
             latencyMs = 100
             onPath("/streams/", body = body)
             onPath("/audio/251", status = 403, body = "")
-            onPath("/audio/", body = "audio")
+            onPath("/audio/", body = "audio", contentType = "audio/webm")
         }
         val stream = assertNotNull(sourceApi(http).getStreamsOfAudioSource(basicSource()).single())
         assertEquals(listOf("https://piped.example/audio/140", "https://piped.example/audio/250"), stream.streams.map { it.url })
@@ -353,17 +421,18 @@ class AudioProbeSkipTest {
     )
 
     @Test
-    fun `a served video is not probed again within 30 minutes`() = runTest {
+    fun `a served video is not probed again within 2 minutes, but is after the window`() = runTest {
         var clock = 0L
         val http = FakeHttp().apply {
             onPath("/streams/", body = body)
-            onPath("/audio/", body = "")
+            onPath("/audio/", body = "", contentType = "audio/webm")
         }
         val api = RealPipedAudioAPI(AudioPipedClient(PipedClient(http) { "https://piped.example" }), now = { clock })
         api.getStreamsOfAudioSource(source("aaaaaaaaaaa"))
+        clock += 119_000L
         api.getStreamsOfAudioSource(source("aaaaaaaaaaa"))
         assertEquals(1, http.countMatching("/audio/"))
-        clock += 31 * 60_000L
+        clock += 2_000L
         api.getStreamsOfAudioSource(source("aaaaaaaaaaa"))
         assertEquals(2, http.countMatching("/audio/"))
     }
@@ -372,7 +441,7 @@ class AudioProbeSkipTest {
     fun `another video on the same proxy is still probed`() = runTest {
         val http = FakeHttp().apply {
             onPath("/streams/", body = body)
-            onPath("/audio/", body = "")
+            onPath("/audio/", body = "", contentType = "audio/webm")
         }
         val api = RealPipedAudioAPI(AudioPipedClient(PipedClient(http) { "https://piped.example" }))
         api.getStreamsOfAudioSource(source("aaaaaaaaaaa"))

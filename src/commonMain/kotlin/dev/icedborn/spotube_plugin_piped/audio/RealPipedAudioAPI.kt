@@ -28,7 +28,7 @@ private const val PLAYABLE_CONFIDENCE = 0.8f
 private val YOUTUBE_ID_REGEX = Regex("[A-Za-z0-9_-]{11}")
 
 /** After a probe proved a video's rows served, the host's re-resolves of it skip the probe for this long. */
-private const val PROBE_SKIP_MS = 30 * 60_000L
+private const val PROBE_SKIP_MS = 120_000L
 private const val SERVED_MEMO_LIMIT = 500
 
 internal class RealPipedAudioAPI(
@@ -155,28 +155,32 @@ internal class RealPipedAudioAPI(
         // The refusal is per video, so one probe of the richest row settles the common case.
         val richest = rows.maxBy { it.bitrate }
         servedAt[videoId]?.let { if (now() - it < PROBE_SKIP_MS) return rows }
-        when (probe(richest.url)) {
-            true -> {
-                servedAt.remove(videoId)
-                servedAt[videoId] = now()
-                if (servedAt.size > SERVED_MEMO_LIMIT) servedAt.remove(servedAt.keys.first())
-                return rows
-            }
-
-            // An inconclusive probe offers the rows but proves nothing, so it is not remembered.
-            null -> return rows
-
-            false -> servedAt.remove(videoId)
+        val first = probe(richest.url)
+        if (first == true) {
+            servedAt.remove(videoId)
+            servedAt[videoId] = now()
+            if (servedAt.size > SERVED_MEMO_LIMIT) servedAt.remove(servedAt.keys.first())
+            return rows
         }
-
-        audioApiLog.i { "$videoId: the instance refused the richest audio row, probing the rest" }
-        val served = coroutineScope {
+        if (first == false) {
+            servedAt.remove(videoId)
+            audioApiLog.i { "$videoId: the instance refused the richest audio row, probing the rest" }
+        }
+        // A refusal or an inconclusive answer proves nothing about the video, so the rest are probed too.
+        val rest = coroutineScope {
             rows.filter { it !== richest }
-                .map { row -> async { row.takeIf { isServed(it.url) } } }
+                .map { row -> async { row to probe(row.url) } }
                 .awaitAll()
-                .filterNotNull()
         }
-        return served.ifEmpty { muxedStream(videoId, info) }
+        val verdicts = listOf(richest to first) + rest
+        // The host picks one row and has no failover, so a row with no verdict is offered only while
+        // nothing better is proved: an unproved URL must not be selectable over a serving one.
+        val served = verdicts.filter { it.second == true }.map { it.first }
+        if (served.isNotEmpty()) return served
+        // Nothing served: a row with no verdict is not proved bad, so the unknown rows are offered
+        // before the muxed fallback, and only rows the instance refused are dropped.
+        val unknown = verdicts.filter { it.second == null }.map { it.first }
+        return unknown.ifEmpty { muxedStream(videoId, info) }
     }
 
     /** itag 18 only: videoStreams can also hold LBRY mirror rows, one of them an HLS manifest. */
@@ -192,11 +196,13 @@ internal class RealPipedAudioAPI(
         return emptyList()
     }
 
-    /** True when served, false when refused, null when the probe was inconclusive (429, 5xx, transport error). */
+    /** True when served, false when refused, null when inconclusive: 429, 5xx, another status, a missing or
+     * non-media Content-Type or a transport failure. Inconclusive never counts as served. */
     private suspend fun probe(url: String): Boolean? = client.servesMediaUrl(url).also {
         if (it == false) audioApiLog.d { "the instance refused a stream URL" }
     }
 
+    /** Only a refusal drops the muxed row: a blip on its probe must not lose the whole source. */
     private suspend fun isServed(url: String): Boolean = probe(url) != false
 }
 

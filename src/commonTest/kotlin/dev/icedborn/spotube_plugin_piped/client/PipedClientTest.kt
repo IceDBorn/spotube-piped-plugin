@@ -3,6 +3,7 @@ package dev.icedborn.spotube_plugin_piped.client
 import dev.icedborn.spotube_plugin_piped.core.Fixtures
 import dev.icedborn.spotube_plugin_piped.core.pathWithoutQuery
 import dev.icedborn.spotube_plugin_piped.fakes.FakeHttp
+import dev.krtirtho.plugin_interfaces.host_apis.HttpMethod
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -206,5 +207,49 @@ class PipedClientTest {
         assertEquals("/search", "/search?q=a%20b&filter=all".pathWithoutQuery())
         assertEquals("/streams/abc", "/streams/abc".pathWithoutQuery())
         assertEquals("/", "/?q=x".pathWithoutQuery())
+    }
+
+    // The stream probe: a HEAD whose verdict reads the status and the Content-Type, never the body.
+
+    private suspend fun probe(http: FakeHttp) = client(http).servesMediaUrl("https://cdn.example/videoplayback")
+
+    @Test
+    fun `the probe is a HEAD that accepts 200 and 206 with a media Content-Type`() = runTest {
+        for (status in listOf(200, 206)) {
+            for (type in listOf("audio/webm", "video/mp4")) {
+                val http = FakeHttp().apply { onPath("/videoplayback", status = status, body = "", contentType = type) }
+                assertTrue(assertNotNull(probe(http)), "$status $type")
+                assertEquals(HttpMethod.Head, http.methods.single().first, "$status $type")
+                assertNull(http.headers.single(), "$status $type")
+            }
+        }
+    }
+
+    @Test
+    fun `the probe refuses only 403 and 404`() = runTest {
+        for (status in listOf(403, 404)) {
+            val http = FakeHttp().apply { onPath("/videoplayback", status = status, body = "") }
+            assertFalse(assertNotNull(probe(http)), "status $status")
+        }
+    }
+
+    @Test
+    fun `anything but a media 200 or 206 is inconclusive`() = runTest {
+        // 429 and 5xx are instance trouble, and a missing or non-media Content-Type proves nothing.
+        val answers = listOf(
+            429 to "audio/webm",
+            500 to "audio/webm",
+            503 to "audio/webm",
+            302 to "audio/webm",
+            401 to "audio/webm",
+            200 to "text/html",
+            206 to "text/html",
+            200 to null,
+            206 to null,
+        )
+        for ((status, type) in answers) {
+            val http = FakeHttp().apply { onPath("/videoplayback", status = status, body = "", contentType = type) }
+            assertNull(probe(http), "status $status, Content-Type $type")
+        }
     }
 }

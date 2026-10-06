@@ -10,6 +10,7 @@ import kotlinx.coroutines.delay
 class FakeHttp : HttpClientAPI {
     val requests = mutableListOf<String>()
     val methods = mutableListOf<Pair<HttpMethod, String>>()
+    val headers = mutableListOf<Map<String, String>?>()
     private val routes = mutableListOf<Pair<(String) -> Boolean, HttpResponse>>()
     private val throwing = mutableListOf<Pair<(String) -> Boolean, Throwable>>()
 
@@ -17,12 +18,15 @@ class FakeHttp : HttpClientAPI {
      * that mean to overlap two in-flight calls would really be testing the cache. Costs no wall time in runTest. */
     var latencyMs = 0L
 
-    fun on(match: (String) -> Boolean, status: Int = 200, body: String) {
-        routes += match to HttpResponse(status, emptyMap(), body)
+    /** [contentType] is null for no Content-Type header, which the stream probe reads as inconclusive. */
+    fun on(match: (String) -> Boolean, status: Int = 200, body: String, contentType: String? = null) {
+        val responseHeaders = contentType?.let { mapOf("Content-Type" to it) } ?: emptyMap()
+        routes += match to HttpResponse(status, responseHeaders, body)
     }
 
     /** Matches anywhere in the URL, so a path still hits when the request carries a query string. */
-    fun onPath(path: String, status: Int = 200, body: String) = on({ it.contains(path) }, status, body)
+    fun onPath(path: String, status: Int = 200, body: String, contentType: String? = null) =
+        on({ it.contains(path) }, status, body, contentType)
 
     /** A route that throws instead of answering, the way a host HTTP client fails on a timeout. */
     fun onThrow(match: (String) -> Boolean, error: Throwable) {
@@ -36,6 +40,7 @@ class FakeHttp : HttpClientAPI {
     override suspend fun request(method: HttpMethod, url: String, requestHeaders: Map<String, String>?, body: String?): HttpResponse {
         requests += url
         methods += method to url
+        headers += requestHeaders
         if (latencyMs > 0) delay(latencyMs)
         throwing.firstOrNull { it.first(url) }?.let { throw it.second }
         return routes.firstOrNull { it.first(url) }?.second ?: HttpResponse(404, emptyMap(), "")

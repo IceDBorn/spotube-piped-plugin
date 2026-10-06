@@ -23,7 +23,8 @@ internal class AudioPipedClient(private val client: PipedClient) {
         client.streamsForAudio(videoId)
     }
 
-    /** null = no verdict (5xx, 429, redirect or a failed probe), which the caller treats as served. */
+    /** null = no verdict (429, 5xx, a non-media answer or a failed probe). [playableStreams] never
+     * reads it as served; the muxed fallback is the exception and keeps its row unless refused. */
     suspend fun servesMediaUrl(url: String): Boolean? = orNull("probe") {
         client.servesMediaUrl(url)
     }

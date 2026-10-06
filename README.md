@@ -130,10 +130,17 @@ an account, so plays merged from two accounts land in the same history.
 ### Audio streams
 
 Before it offers a stream, the plugin sends a HEAD request to check that the instance's proxy serves it, because
-some proxies answer every audio row of a video with an empty 403, which the host would save as a 0-byte file. After
-a proxy served a video, that video skips the check for 30 minutes. Only a 403 or 404 counts as a refusal. Any other
-answer that is not a success, such as a timeout, a 429 or a 5xx, lets the rows through without remembering the
-video.
+some proxies answer every audio row of a video with an empty 403, which the host would save as a 0-byte file. The
+probe is a HEAD because the proxy ignores `Range`, so a GET would download the whole file. A row counts as served
+only when the answer is a 2xx with an `audio/` or `video/` Content-Type. After a proxy served a video, that video
+skips the check for 2 minutes. Only a 403 or 404 counts as a refusal. Any other answer, such as a timeout, a 429, a
+5xx or a 2xx without a media Content-Type, is no verdict. The plugin then probes the video's other rows, and when
+none is served it offers the rows it could not disprove, or falls back as below, without remembering the video.
+
+A video whose richest row serves costs 1 probe. A refused or inconclusive one costs one probe per row: the richest
+probe first, then the rest in parallel. The host picks one row of what it is given, with no failover.
+So a row with no verdict is dropped as soon as another row proves served: a blip on the richest row can cost its
+bitrate, and the player is never handed a URL the plugin could not confirm.
 
 When the proxy serves no audio-only row, the plugin falls back to the muxed row with itag 18. That row is a small
 mp4 video file that carries the audio track, so the track plays, and a download of it holds a picture track too.
