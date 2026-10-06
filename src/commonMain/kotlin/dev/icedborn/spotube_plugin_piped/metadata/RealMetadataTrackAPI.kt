@@ -27,6 +27,7 @@ internal class RealMetadataTrackAPI(
 ) : MetadataTrackAPI {
 
     private val songs = SongMatch(client)
+    private val mixArtists = MixArtists(store)
 
     override suspend fun getTrack(id: String): MetadataTrack {
         store.cachedTrack(id)?.let { return it }
@@ -70,8 +71,7 @@ internal class RealMetadataTrackAPI(
             for (seed in seedTrackIds.take(2)) {
                 if (out.size >= limit) break
                 val mixSeed = songSeed(seed)
-                for (item in ytmRadioItems(mixSeed)) {
-                    val track = item.toTrack() ?: continue
+                for (track in mixArtists.tracks(ytmRadioItems(mixSeed))) {
                     if (track.id == seed || track.id == mixSeed || out.containsKey(track.id)) continue
                     out[track.id] = track
                     store.rememberTrack(track)

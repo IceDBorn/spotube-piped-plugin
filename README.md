@@ -79,7 +79,11 @@ Done on the form opened from Logout keeps the session without a check.
 - **Radio queue**: endless playback and the Home radio sections read the YouTube Music radio mix of a track. A mix
   seeded from a music video lists videos, so a seed whose title looks like a video costs one song search, cached
   until restart, and the mix is read from the matching song. Rows titled like videos, with "Official Video",
-  "(Audio)", "Lyric Video" or an "Artist - " prefix naming the uploader, are dropped.
+  "(Audio)", "Lyric Video" or an "Artist - " prefix naming the uploader or an artist of the mix, are dropped. A mix
+  row names the YouTube channel of its video, which can be a fan or band channel rather than the YouTube Music
+  artist. A row whose song is already cached, such as the seed from a song search, keeps the cached YouTube Music
+  artist, and a channel named after that artist maps to it for the other rows, until restart. This costs no
+  requests. Rows of unmapped channels keep the YouTube channel.
 - **Home, Charts tab**: YouTube Music charts for your region, read from the playlists of the "YouTube Music Global
   Charts" channel, because Piped has no charts endpoint.
 
