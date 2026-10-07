@@ -78,7 +78,7 @@ class SmallApisTest {
         val client = PipedClient(piped) { FAKE_INSTANCE }
         val mirror =
             PipedSavedLibrary(piped, store, library, AlbumLookup(client, store), InstanceSource(store, null), noSessionScope) { null }
-        return RealMetadataTrackAPI(client, store, library, mirror)
+        return RealMetadataTrackAPI(client, store, library, mirror, PlayHistory(store))
     }
 
     @Test
@@ -95,6 +95,8 @@ class SmallApisTest {
         val piped = FakePiped(pageSize = 50)
         piped.publicPlaylist("RDAMVM${vid(0)}", "Mix", listOf(vid(0), vid(1)))
         piped.uploaders[vid(0)] = "Alpha Artist - Topic"
+        // vid1 is by the seed's artist too, so no other artist's mix is read.
+        piped.uploaders[vid(1)] = "Alpha Artist - Topic"
         piped.search("q=Alpha%20Artist", listOf(piped.row(vid(1)), piped.row(vid(7))))
         val queue = trackApi(piped).recommendationsBasedOnTracks(listOf(vid(0)), 5)
         assertEquals(listOf(vid(1), vid(7)), queue.map { it.id })

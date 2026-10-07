@@ -84,10 +84,19 @@ Done on the form opened from Logout keeps the session without a check.
   artist. A row whose song is already cached, such as the seed from a song search, keeps the cached YouTube Music
   artist, and a channel named after that artist maps to it for the other rows, until restart. This costs no
   requests. Rows of unmapped channels keep the YouTube channel.
-- **Endless playback**: a mix mostly lists its seed's artist, so each batch takes at most 2 songs per artist. When
-  that leaves the batch short, the plugin reads the mixes of up to 2 songs by other artists in the first mix, 1
-  request each, and only then fills the rest with the extra songs of the artists already in it. Home and related
-  artists read the mix as it is.
+- **Endless playback**: each endless playback session is a station that remembers the songs it returned, so a
+  later batch never repeats them. A batch also leaves out its seeds, songs played in the last 6 hours and other
+  versions of those songs, and live, remix, cover, sped up, slowed, nightcore, karaoke and session takes unless a
+  seed's title has the same tag. Songs rank by how high they sit in the mixes the station has read. An artist gets
+  at most 2 songs per batch with 3 songs between them, and only a batch the other artists cannot fill drops that
+  rule. Every 4th slot takes a song you liked or played by an artist of the station, if you have not played it
+  in the last 2 days and it is not a music video. A song you skip lowers its artist for the rest of the station,
+  and the station never reads its mix. A batch reads at most 4 mixes, 1 request each. Up to 2 come from seeds the
+  station has not read yet, and up to 2 more from songs by other artists when the batch is still short. The first
+  batch of a radio from one song usually costs 2 requests, and later batches 1 to 3. A seed that looks like a
+  music video adds one song search.
+  When the mixes cannot fill a batch, the seed artist's songs fill it for one /streams fetch and one song search.
+  Home and related artists read the mix as it is.
 - **Home, Charts tab**: YouTube Music charts for your region, read from the playlists of the "YouTube Music Global
   Charts" channel, because Piped has no charts endpoint.
 

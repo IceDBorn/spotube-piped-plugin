@@ -1,7 +1,7 @@
 # Design notes
 
 These notes cover the parts of the plugin whose rules span several files: the row cache, the storage keys, the
-mirror index and the history log.
+mirror index, the history log and endless playback.
 
 ## Row cache
 
@@ -93,7 +93,8 @@ beyond the caps below and deletes expired `unresolvable:` latches.
 | --- | --- |
 | `piped.library` | Saved track, album, artist and playlist ids on this device |
 | `piped.playlists` | Locally created playlists with their track ids |
-| `history.tracks` | Play history that Home reads, the last 200 tracks |
+| `history.tracks` | Play history that Home and endless playback read, the last 200 tracks |
+| `radio.stations` | The last 3 endless playback stations, each with its returned songs, pool and skips |
 
 ### Caches
 
@@ -282,3 +283,93 @@ positions at the head the trim finds no row, and the log grows past the cap.
 
 `history.tracks` is one history per device, not per account. The plays merged from two accounts land in the same
 history.
+
+## Endless playback
+
+`EndlessPlayback` in `metadata/EndlessPlayback.kt` answers `recommendationsBasedOnTracks`, which Spotube Nightly
+calls only for endless playback. The host calls it when the last song of the queue starts, with a limit of 20. The
+seeds are the whole queue while it holds 5 songs or fewer, and otherwise 5 songs picked at random from the whole
+queue, played ones included. The host appends the batch without removing repeats, and an empty batch ends
+playback. No skip or progress signal reaches plugins.
+
+### Stations
+
+A station is the state of one endless playback session. `radio.stations` holds the 3 most recently updated ones,
+newest first.
+
+| Field | Holds |
+| --- | --- |
+| `updatedAt` | The time of the station's last batch |
+| `queued` | The seeds the host sent and the songs the station read seed mixes from, the last 200 |
+| `read` | The seeds whose mix the station read, the last 200 |
+| `pool` | Up to 200 songs not yet returned, each with a score |
+| `batches` | Each batch's time and songs, with their version keys, up to 500 songs |
+| `skipped` | The last 100 returned songs the listener skipped, with their version keys |
+
+A batch continues the live station that queued or returned the most of its seeds, the most recently updated one
+on a tie. A single seed continues only a station that already queued it. Any other song played on its own, from a
+Home card or a search, starts a fresh station and reads its mix. A song that started a station still continues it.
+A station is live for 24 hours after its last batch. Seeds that no live station knows start a new one.
+A save drops stations that are no longer live and keeps the 3 newest. Past 500 returned songs the oldest batch
+goes, so a session of 25 batches or more may repeat songs from its start. A station takes up to about 50 KB.
+
+`radio.stations` belongs to the device, like `history.tracks`. `RadioStations` keeps the list in memory after the
+first read. When a write fails, the memory copy stays in use, so the station lasts until the plugin restarts.
+
+### Building a batch
+
+1. The station checks its last batch for skips and adds the seeds to `queued`.
+2. The seeds' tracks, from play history or the track cache, give the seed artists, the seeds' title tags and their
+   version keys. Other versions of the older queued songs stay out too.
+3. The batch reads the mixes of up to 2 seeds the station has not read and that were not skipped, the most
+   recently played first, then liked ones. It stops early once the pool holds 2 batches of usable songs. The mix's
+   own row for its seed adds to the seed artists, tags and versions. A mix that fails to load leaves its seed
+   unread, so a later batch tries it again.
+4. The batch picks songs from the pool by score, at most 2 per artist, with 3 songs between two songs of one
+   artist, counted across the end of the previous batch. Every 4th slot takes a familiar song first.
+5. When the artist rules leave the batch short, the batch reads the mixes of up to 2 pool songs by artists other
+   than the seed artists, one artist each, and picks again.
+6. Pool songs fill the slots still empty, without the artist rules.
+7. When the batch is still short, the seed artist's catalog from a music_songs search joins the pool, and the batch
+   picks and fills again.
+8. The picks leave the pool and become the station's newest batch.
+
+Each mix adds to the pool by reciprocal rank fusion. The song at rank r, counted from 1, adds `weight / (20 + r)`
+to its score. A seed mix weighs 1, the mix of another artist's song 0.7 and the catalog 0.3. Queued and returned
+songs never enter the pool.
+
+A song is usable when it is not a seed, a queued song or a returned song, was not played in the last 6 hours, and
+is not another version of a seed, a queued song, a returned song or a song played in the last 6 hours.
+
+The version key is the artist key plus the base title. The base title drops bracketed parts and a " - " suffix and
+keeps letters and digits, so "Song", "Song (Remastered)" and "Song - 2011 Remaster" share one key. A leading
+"Artist - " part that names the track's own artist is dropped first, since uploads carry it as a prefix. A title
+whose brackets or " - " suffix name a live, remix, cover, sped up, slowed, nightcore, karaoke or session take is
+usable only when a seed's title has the same tag.
+
+The artist key is the first artist's name without the " - Topic" suffix, in letters and digits. It comes from names
+rather than channel ids, since one artist's songs arrive from a topic channel, a band channel and fan channels.
+
+### Familiar songs
+
+A familiar song is one the listener liked or played, by a seed artist, an artist the station returned or an artist
+in the pool. It must not have been played in the last 2 days, and one that looks like a music video is left out,
+since the station stays on YouTube Music songs. Each play counts 1 and a like counts 3. Familiar songs take only
+every 4th slot, so they fill at most a quarter of a batch, and they never fill other slots. The batch scans only
+the last 200 saved songs.
+
+### Skips
+
+A song of the last batch counts as skipped when it was not played after the plugin returned the batch, while a
+later song of that batch was. The host asks for a batch when the last song starts, so the songs before it are over.
+The check reads only the last batch, because the history keeps 200 plays and an older batch could look skipped once
+its plays age out. A skipped song never seeds a mix, and each skip halves the scores of its artist's songs in that
+station.
+
+With scrobbles off, every audio resolve counts as a play, preloads included, so fewer skips show.
+
+### Failures
+
+The batch skips a pool entry whose track left the `track:` cache, since the station keeps only ids. A failed
+catalog fetch leaves the batch with what the mixes gave. Any other failure logs `radio queue from <id> failed` and
+returns an empty batch, which ends playback.

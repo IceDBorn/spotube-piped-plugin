@@ -19,10 +19,10 @@ private val VIDEO_MARKERS = listOf(
 
 private const val SONG_CACHE_SIZE = 200
 
-private fun nameKey(name: String) = name.lowercase().filter { it.isLetterOrDigit() }
+internal fun nameKey(name: String) = name.lowercase().filter { it.isLetterOrDigit() }
 
 // A key shorter than 3 characters would be contained in most names, so it has to match whole.
-private fun namesMatch(a: String, b: String): Boolean {
+internal fun namesMatch(a: String, b: String): Boolean {
     val x = nameKey(a)
     val y = nameKey(b)
     if (x.isEmpty() || y.isEmpty()) return false

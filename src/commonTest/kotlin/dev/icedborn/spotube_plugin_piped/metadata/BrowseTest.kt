@@ -36,7 +36,7 @@ class BrowseTest {
         val piped = account.piped
         val store = account.store
         val history = PlayHistory(store)
-        val tracks = RealMetadataTrackAPI(account.client, store, account.library, account.mirror)
+        val tracks = RealMetadataTrackAPI(account.client, store, account.library, account.mirror, history)
         val artists = RealMetadataArtistAPI(account.client, store, account.library, account.mirror)
         val albums = RealMetadataAlbumAPI(account.client, store, account.library, account.mirror, account.lookup)
         val playlists = RealMetadataPlaylistAPI(

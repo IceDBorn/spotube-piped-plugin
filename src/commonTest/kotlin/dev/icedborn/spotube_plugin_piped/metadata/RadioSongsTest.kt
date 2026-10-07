@@ -12,6 +12,7 @@ import dev.icedborn.spotube_plugin_piped.fakes.vid
 import dev.icedborn.spotube_plugin_piped.store.EntityStore
 import dev.icedborn.spotube_plugin_piped.store.LocalLibrary
 import dev.icedborn.spotube_plugin_piped.store.PipedSavedLibrary
+import dev.icedborn.spotube_plugin_piped.store.PlayHistory
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -32,7 +33,7 @@ class RadioSongsTest {
         val client = PipedClient(piped) { FAKE_INSTANCE }
         val mirror =
             PipedSavedLibrary(piped, store, library, AlbumLookup(client, store), InstanceSource(store, null), noSessionScope) { null }
-        return RealMetadataTrackAPI(client, store, library, mirror)
+        return RealMetadataTrackAPI(client, store, library, mirror, PlayHistory(store))
     }
 
     @Test
@@ -74,8 +75,8 @@ class RadioSongsTest {
         // One song search and the song's mix; the video's own mix is never read.
         assertEquals(2, piped.total)
         assertEquals(0, piped.count("RDAMVM${vid(0)}"))
-        // A second queue from the same video reuses the match.
-        api.recommendationsBasedOnTracks(listOf(vid(0)), 2)
+        // A second radio from the same video reuses the match.
+        api.radio(listOf(vid(0)), 2)
         assertEquals(1, piped.count("filter=music_songs"))
     }
 
@@ -88,15 +89,6 @@ class RadioSongsTest {
         piped.reset()
         assertEquals(listOf(vid(1), vid(2)), api.recommendationsBasedOnTracks(listOf(vid(0)), 2).map { it.id })
         assertEquals(1, piped.total)
-    }
-
-    private fun mixRow(videoId: String, uploader: String, channel: String) = buildJsonObject {
-        put("type", "stream")
-        put("url", "/watch?v=$videoId")
-        put("title", "Song $videoId")
-        put("uploaderName", uploader)
-        put("uploaderUrl", "/channel/$channel")
-        put("duration", 200)
     }
 
     private fun song(videoId: String, artist: String, channel: String): MetadataTrack {
@@ -143,16 +135,6 @@ class RadioSongsTest {
         assertEquals(1, piped.total)
     }
 
-    private fun mixBody(rows: List<JsonObject>) = buildJsonObject {
-        put("name", "Mix")
-        put("nextpage", null as String?)
-        put("relatedStreams", JsonArray(rows))
-    }.toString()
-
-    private fun channel(name: String) = "UC" + name.padEnd(22, '0')
-
-    private fun artistRow(index: Int, artist: String) = mixRow(vid(index), artist, channel(artist))
-
     @Test
     fun `endless playback spreads a batch across artists`() = runTest {
         val piped = FakePiped(pageSize = 50)
@@ -160,8 +142,8 @@ class RadioSongsTest {
         piped.override("RDAMVM${vid(0)}", body = mixBody(band + artistRow(5, "bee") + artistRow(6, "cee")))
         piped.override("RDAMVM${vid(5)}", body = mixBody(listOf(artistRow(5, "bee"), artistRow(7, "dee"), artistRow(8, "eee"))))
         val queue = trackApi(piped).recommendationsBasedOnTracks(listOf(vid(0)), 6)
-        // Two songs of the band, then the other artists, then the mix of the first other artist's song.
-        assertEquals(listOf(1, 2, 5, 6, 7, 8).map(::vid), queue.map { it.id })
+        // The band plays at most twice and never within 3 songs of itself, so bee's mix fills the gaps.
+        assertEquals(listOf(1, 5, 6, 7, 2, 8).map(::vid), queue.map { it.id })
         assertEquals(2, piped.total)
     }
 
@@ -172,5 +154,19 @@ class RadioSongsTest {
         val queue = trackApi(piped).recommendationsBasedOnTracks(listOf(vid(0)), 4)
         assertEquals(listOf(1, 2, 3, 4).map(::vid), queue.map { it.id })
         assertEquals(1, piped.total)
+    }
+
+    @Test
+    fun `endless playback never repeats a song of an earlier batch`() = runTest {
+        val piped = FakePiped(pageSize = 50)
+        piped.override("RDAMVM", body = mixBody((0..8).map { artistRow(it, "ar$it") }))
+        val api = trackApi(piped)
+        val first = api.recommendationsBasedOnTracks(listOf(vid(0)), 4).map { it.id }
+        assertEquals((1..4).map(::vid), first)
+        // The host seeds the next batch with the whole queue while it holds 5 songs or fewer.
+        val second = api.recommendationsBasedOnTracks(listOf(vid(0)) + first, 4).map { it.id }
+        assertEquals((5..8).map(::vid), second)
+        // The second batch reads the mixes of 2 seeds it had not read.
+        assertEquals(3, piped.total)
     }
 }

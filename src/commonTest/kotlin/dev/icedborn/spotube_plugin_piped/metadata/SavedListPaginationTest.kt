@@ -9,6 +9,7 @@ import dev.icedborn.spotube_plugin_piped.fakes.vid
 import dev.icedborn.spotube_plugin_piped.store.EntityStore
 import dev.icedborn.spotube_plugin_piped.store.LocalLibrary
 import dev.icedborn.spotube_plugin_piped.store.PipedSavedLibrary
+import dev.icedborn.spotube_plugin_piped.store.PlayHistory
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -29,7 +30,7 @@ class SavedListPaginationTest {
         val instance = InstanceSource(store, null)
         val client = PipedClient(http) { "https://piped.example" }
         val mirror = PipedSavedLibrary(http, store, library, AlbumLookup(client, store), instance, noSessionScope) { null }
-        val tracks = RealMetadataTrackAPI(client, store, library, mirror)
+        val tracks = RealMetadataTrackAPI(client, store, library, mirror, PlayHistory(store))
     }
 
     /** A /streams body, so a saved id resolves without any search. */

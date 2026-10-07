@@ -109,7 +109,7 @@ private suspend fun start() {
         coroutineScope = initScope,
     )
     zipline.bind<CoreAPI>(CoreAPI_SERVICE_NAME, core)
-    val trackApi = RealMetadataTrackAPI(client, store, library, mirror)
+    val trackApi = RealMetadataTrackAPI(client, store, library, mirror, history)
     val scrobbles = ScrobbleHistory(history, store, fetchTrack = { id -> trackApi.getTrack(id) }, onPlay = { mirror.played(it) })
     val playback = PipedClient(httpClient) { instanceSource.playback() ?: instanceSource.requireApi() }
     zipline.bind<AudioAPI>(
