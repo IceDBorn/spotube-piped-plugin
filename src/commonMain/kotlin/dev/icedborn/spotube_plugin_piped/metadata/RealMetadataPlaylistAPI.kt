@@ -216,9 +216,16 @@ internal class RealMetadataPlaylistAPI(
     override suspend fun isSavedPlaylists(ids: List<String>): List<Boolean> = library.isSavedPlaylists(ids)
 
     /** A synthetic id is generated, so it is never stored as a bookmark. */
-    override suspend fun savePlaylists(ids: List<String>) = library.savePlaylists(ids.filterNot(::isSynthetic))
+    override suspend fun savePlaylists(ids: List<String>) {
+        val nonSynthetic = ids.filterNot(::isSynthetic)
+        library.savePlaylists(nonSynthetic)
+        mirror.savedPlaylistsChanged(nonSynthetic, saved = true)
+    }
 
-    override suspend fun removeSavedPlaylists(ids: List<String>) = library.removePlaylists(ids)
+    override suspend fun removeSavedPlaylists(ids: List<String>) {
+        library.removePlaylists(ids)
+        mirror.savedPlaylistsChanged(ids, saved = false)
+    }
 
     override suspend fun createPlaylist(
         name: String,

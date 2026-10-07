@@ -2,9 +2,11 @@ package dev.icedborn.spotube_plugin_piped.store
 
 import dev.icedborn.spotube_plugin_piped.client.AccountHttp
 import dev.icedborn.spotube_plugin_piped.client.CachedRows
+import dev.icedborn.spotube_plugin_piped.client.canonicalArtistId
 import dev.icedborn.spotube_plugin_piped.core.InstanceSource
 import dev.icedborn.spotube_plugin_piped.core.PipedAccount
 import dev.icedborn.spotube_plugin_piped.metadata.AlbumLookup
+import dev.icedborn.spotube_plugin_piped.sync.StorageSync
 import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlinx.coroutines.CoroutineScope
@@ -14,14 +16,15 @@ import kotlinx.coroutines.CoroutineScope
 internal class PipedSavedLibrary(
     httpClient: HttpClientAPI,
     store: EntityStore,
-    library: LocalLibrary,
+    private val library: LocalLibrary,
     albumLookup: AlbumLookup,
     instanceSource: InstanceSource,
     // Background refreshes run here; the plugin passes its main scope, tests their own.
     refreshScope: CoroutineScope,
     // The plugin passes the instance its roles write to, because the write lock is per instance.
     history: PlayHistory = PlayHistory(store),
-    sessionProvider: suspend () -> PipedAccount?,
+    private val sync: StorageSync? = null,
+    private val sessionProvider: suspend () -> PipedAccount?,
 ) {
     private val http = AccountHttp(httpClient)
     private val bindings = SavedBindings(store)
@@ -32,7 +35,7 @@ internal class PipedSavedLibrary(
     private val cache = AccountCache(
         http, store, library, instanceSource, bindings, rows, playlists,
         SavedSetResolver(store, bindings, albumLookup, representatives),
-        historySync, refreshScope, sessionProvider,
+        historySync, refreshScope, sessionProvider, sync,
     )
     private val writer = MirrorWriter(
         http,
@@ -48,17 +51,32 @@ internal class PipedSavedLibrary(
 
     suspend fun accountPlaylist(id: String): CachedAccountPlaylist? = cache.accountPlaylist(id)
 
-    suspend fun allSavedTrackIds(): List<String> = cache.allSavedIds(SavedKind.TRACK)
+    private suspend fun storageOn(): Boolean = sync?.activeAccount() != null
 
-    suspend fun allSavedAlbumIds(): List<String> = cache.allSavedIds(SavedKind.ALBUM)
+    private suspend fun localSaved(kind: SavedKind): List<String> = when (kind) {
+        SavedKind.TRACK -> library.savedTracks()
+        SavedKind.ALBUM -> library.savedAlbums()
+        SavedKind.ARTIST -> library.savedArtists().map(::canonicalArtistId)
+    }
 
-    suspend fun allSavedArtistIds(): List<String> = cache.allSavedIds(SavedKind.ARTIST)
+    private suspend fun savedIds(kind: SavedKind): List<String> = if (storageOn()) localSaved(kind) else cache.allSavedIds(kind)
 
-    suspend fun isSavedTracks(ids: List<String>): List<Boolean> = cache.isSaved(SavedKind.TRACK, ids)
+    private suspend fun isSaved(kind: SavedKind, ids: List<String>): List<Boolean> {
+        val saved = savedIds(kind).toHashSet()
+        return ids.map { kind.canonical(it) in saved }
+    }
 
-    suspend fun isSavedAlbums(ids: List<String>): List<Boolean> = cache.isSaved(SavedKind.ALBUM, ids)
+    suspend fun allSavedTrackIds(): List<String> = savedIds(SavedKind.TRACK)
 
-    suspend fun isSavedArtists(ids: List<String>): List<Boolean> = cache.isSaved(SavedKind.ARTIST, ids)
+    suspend fun allSavedAlbumIds(): List<String> = savedIds(SavedKind.ALBUM)
+
+    suspend fun allSavedArtistIds(): List<String> = savedIds(SavedKind.ARTIST)
+
+    suspend fun isSavedTracks(ids: List<String>): List<Boolean> = isSaved(SavedKind.TRACK, ids)
+
+    suspend fun isSavedAlbums(ids: List<String>): List<Boolean> = isSaved(SavedKind.ALBUM, ids)
+
+    suspend fun isSavedArtists(ids: List<String>): List<Boolean> = isSaved(SavedKind.ARTIST, ids)
 
     suspend fun maybeRefresh() = cache.maybeRefresh()
 
@@ -69,11 +87,29 @@ internal class PipedSavedLibrary(
     /** A play the host scrobbled, queued for the account's history log. */
     suspend fun played(track: MetadataTrack) = historySync.onPlay(track)
 
-    suspend fun save(kind: SavedKind, ids: List<String>) = writer.save(kind, ids)
+    suspend fun save(kind: SavedKind, ids: List<String>) {
+        if (sync?.librarySaved(kind, ids, saved = true) == true) return
+        writer.save(kind, ids)
+    }
 
-    suspend fun remove(kind: SavedKind, ids: List<String>) = writer.remove(kind, ids)
+    suspend fun remove(kind: SavedKind, ids: List<String>) {
+        if (sync?.librarySaved(kind, ids, saved = false) == true) return
+        writer.remove(kind, ids)
+    }
 
-    suspend fun removeLibraryEntries(kind: SavedKind, ids: List<String>) = writer.removeLibraryEntries(kind, ids)
+    suspend fun savedPlaylistsChanged(ids: List<String>, saved: Boolean) {
+        sync?.savedPlaylistsChanged(ids, saved)
+    }
+
+    /** With storage active no mirror row decides ownership, so the unsave always reaches the local library. */
+    suspend fun removeLibraryEntries(kind: SavedKind, ids: List<String>) {
+        if (!storageOn()) return writer.removeLibraryEntries(kind, ids)
+        when (kind) {
+            SavedKind.TRACK -> library.removeTracks(ids)
+            SavedKind.ALBUM -> library.removeAlbums(ids)
+            SavedKind.ARTIST -> library.removeArtists(ids)
+        }
+    }
 
     suspend fun mirrorCreatePlaylist(localId: String, name: String, videoIds: List<String>): String? =
         playlists.create(localId, name, videoIds)

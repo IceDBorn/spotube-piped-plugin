@@ -13,6 +13,7 @@ import dev.icedborn.spotube_plugin_piped.core.epochMillis
 import dev.icedborn.spotube_plugin_piped.core.mapConcurrently
 import dev.icedborn.spotube_plugin_piped.core.normalizeInstance
 import dev.icedborn.spotube_plugin_piped.core.sameAccount
+import dev.icedborn.spotube_plugin_piped.sync.StorageSync
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -47,6 +48,7 @@ internal class AccountCache(
     private val historySync: HistorySync,
     private val refreshScope: CoroutineScope,
     private val sessionProvider: suspend () -> PipedAccount?,
+    private val storage: StorageSync? = null,
 ) {
 
     private val refreshMutex = Mutex()
