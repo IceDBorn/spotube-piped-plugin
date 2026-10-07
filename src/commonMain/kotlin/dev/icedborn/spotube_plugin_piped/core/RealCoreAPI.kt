@@ -75,22 +75,18 @@ internal class RealCoreAPI(
     override val loggedInFlow: StateFlow<Boolean> = loggedInStateFlow.asStateFlow()
 
     init {
-        scope.launch {
-            loggedInStateFlow.value = session.load() != null
-        }
+        scope.launch { loggedInStateFlow.value = session.load() != null }
     }
 
     override suspend fun checkPluginUpdates(currentVersion: SemVer): PluginUpdateInfo? = updateChecker.check(currentVersion)
 
     override fun supportMarkdownText(currentVersion: SemVer): String =
         "YouTube Music audio and metadata (tracks, albums, artists, playlists) via a Piped instance." +
-            " There is no default instance: open Settings, choose Piped and save the URL" +
-            " of an instance from the TeamPiped list (github.com/TeamPiped/Piped/wiki/Instances)." +
-            " Optionally give it a separate playback instance for audio." +
+            " There is no default instance: open Settings, choose Piped and save the URL of an instance from the TeamPiped list" +
+            " (github.com/TeamPiped/Piped/wiki/Instances). Optionally give it a separate playback instance for audio." +
             " Scrobbles feed a play history on this device that drives the For you section of Home." +
-            " Log in on that instance to sync saved items and the play history to the account and keep an" +
-            " offline cache on this device; without an account everything stays local." +
-            " Source: https://github.com/IceDBorn/spotube-piped-plugin"
+            " Log in on that instance to sync saved items and the play history to the account and keep an offline cache on this device;" +
+            " without an account everything stays local. Source: https://github.com/IceDBorn/spotube-piped-plugin"
 
     override suspend fun login() {
         loggedInStateFlow.value = false
@@ -199,10 +195,7 @@ internal class RealCoreAPI(
 
     /** Only an explicit Log out, or an instance change, ends the session. */
     private suspend fun endLogoutForm(account: PipedAccount, result: SettingsFormResult): Boolean = when (result) {
-        SettingsFormResult.LoggedOut -> {
-            session.clear()
-            false
-        }
+        SettingsFormResult.LoggedOut -> false.also { session.clear() }
 
         // Done, and anything else the manage form can return: a sign-in or a skip there can only be a replayed
         // message. An instance change already cleared the session in saveInstance.
@@ -241,14 +234,9 @@ internal class RealCoreAPI(
             val refused = (status == 401 || status == 403) && root is JsonObject && "error" in root
             return if (refused) SessionCheck.REVOKED else SessionCheck.UNKNOWN
         }
-        return when {
-            root is JsonArray -> SessionCheck.VALID
-
-            else -> {
-                coreLog.w { "session check on ${account.instance} returned an unreadable body: ${body.take(200)}" }
-                SessionCheck.UNKNOWN
-            }
-        }
+        if (root is JsonArray) return SessionCheck.VALID
+        coreLog.w { "session check on ${account.instance} returned an unreadable body: ${body.take(200)}" }
+        return SessionCheck.UNKNOWN
     }
 
     private enum class SessionCheck { VALID, REVOKED, UNKNOWN }
@@ -269,23 +257,14 @@ internal class RealCoreAPI(
             while (true) {
                 val message = withTimeoutOrNull(FORM_WAIT_MS) { messages.receive() }
                     ?: throw IllegalStateException("the settings form was closed without saving")
-                if (message == FORM_OPEN_FAILED) {
-                    throw IllegalStateException("the settings form could not be shown")
-                }
+                if (message == FORM_OPEN_FAILED) throw IllegalStateException("the settings form could not be shown")
                 val fields = runCatching { json.parseToJsonElement(message).jsonObject }.getOrNull() ?: continue
                 if (fields["nonce"]?.jsonPrimitive?.contentOrNull != nonce) continue
                 val action = fields["action"]?.jsonPrimitive?.contentOrNull
                 if (applySetting(action, fields, manage)) continue
-                when (action) {
-                    "close" -> {
-                        delay(FORM_CLOSE_GRACE_MS)
-                        return SettingsFormResult.Closed
-                    }
-
-                    "logout" -> {
-                        delay(FORM_CLOSE_GRACE_MS)
-                        return SettingsFormResult.LoggedOut
-                    }
+                if (action == "close" || action == "logout") {
+                    delay(FORM_CLOSE_GRACE_MS)
+                    return if (action == "close") SettingsFormResult.Closed else SettingsFormResult.LoggedOut
                 }
                 if (manage) {
                     // The manage form has no sign-in fields, so a login message can only be a replay.
@@ -325,14 +304,10 @@ internal class RealCoreAPI(
             webView.postMessagesFlow().onEach { messages.trySend(it) }.launchIn(this)
             val lightTheme = runCatching { storage.getString(FORM_THEME_KEY) }.getOrNull() == "light"
             val html = settingsFormHtml(
-                instance, playback, username, lightTheme,
-                region.stored(), region.detected(),
+                instance, playback, username, lightTheme, region.stored(), region.detected(),
                 channel?.stored()?.name ?: UpdateChannel.AUTO.name,
                 library = libraryPlaylist?.stored()?.name ?: LibraryPlaylist.ALWAYS.name,
-                nonce = nonce,
-                manage = manage,
-                signedInAs = signedIn?.username,
-                signedInOn = signedIn?.instance,
+                nonce = nonce, manage = manage, signedInAs = signedIn?.username, signedInOn = signedIn?.instance,
             )
             webView.navigateToHTML(html)
         } catch (e: CancellationException) {
@@ -405,9 +380,8 @@ internal class RealCoreAPI(
     /** The host cannot reply to the form directly, so feedback is pushed with evaluateJavaScript. */
     private suspend fun setFormStatus(text: String) {
         // The form disables its buttons while a message is in flight; an error status must re-enable them.
-        val script = "var s=document.getElementById('status');" +
-            "if(s){s.className='error';s.textContent=${json.encodeToString(text)};}" +
-            "if(window.disableButtons){window.disableButtons(false);}"
+        val script = "var s=document.getElementById('status');if(s){s.className='error';s.textContent=" +
+            "${json.encodeToString(text)};}if(window.disableButtons){window.disableButtons(false);}"
         runCatching { webView.evaluateJavaScript(script) }
     }
 
@@ -451,10 +425,8 @@ internal class RealCoreAPI(
         val sessionKept = session.load() != null
         // The manage form has no sign-in fields, so it must not tell the user to sign in.
         val text = if (manage) "Instance saved." else "Instance saved. Sign in, or continue without an account."
-        val script = "if(window.onInstanceSaved){window.onInstanceSaved(" +
-            "${json.encodeToString(active)}," +
-            "${json.encodeToString(text)}," +
-            "$sessionKept);}"
+        val script = "if(window.onInstanceSaved){window.onInstanceSaved(${json.encodeToString(active)}," +
+            "${json.encodeToString(text)},$sessionKept);}"
         runCatching { webView.evaluateJavaScript(script) }
     }
 
