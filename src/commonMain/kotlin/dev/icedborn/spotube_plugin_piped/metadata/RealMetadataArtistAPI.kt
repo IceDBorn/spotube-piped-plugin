@@ -196,17 +196,20 @@ internal class RealMetadataArtistAPI(
     /** Topic channels carry no uploads, so channel videos are mixed with a YT Music song search for the artist
      * name; the channel's own uploader wins ties. */
     private suspend fun top10Tracks(id: String, channel: PipedChannelInfo): List<MetadataTrack> {
+        val query = cleanName(channel.name)
         val fromChannel = channel.relatedStreams
             .filter { it.type == "stream" || it.type == "video" }
+            .filter { uploadedByArtist(it, id, query) }
             .mapNotNull { it.toTrack()?.also { track -> store.rememberTrack(track) } }
         if (fromChannel.size >= 5) return fromChannel.take(TOP_TRACKS_LIMIT)
         // A blank name would search for arbitrary rows.
-        if (channel.name.isBlank()) return fromChannel.take(TOP_TRACKS_LIMIT)
+        if (query.isBlank()) return fromChannel.take(TOP_TRACKS_LIMIT)
 
         // search() throws on a non-2xx status, which would fail the artist screen.
-        val page = runCatching { client.search(channel.name, PipedSearchFilter.MUSIC_SONGS) }.getOrNull()
+        val page = runCatching { client.search(query, PipedSearchFilter.MUSIC_SONGS) }.getOrNull()
         val songs = page?.items.orEmpty()
             .filter { it.type == "stream" || it.type == "video" }
+            .filter { uploadedByArtist(it, id, query) }
             .sortedByDescending { channelIdOf(it.uploaderUrl) == id }
             .mapNotNull { it.toTrack()?.also { track -> store.rememberTrack(track) } }
         return (fromChannel + songs).distinctBy { it.id }.take(TOP_TRACKS_LIMIT)
@@ -239,7 +242,7 @@ internal class RealMetadataArtistAPI(
     ): PaginationResult<MetadataAlbum.Detailed> {
         // Auto-generated music channels end in " - Topic"; that suffix poisons the music_albums search
         // query (YT Music then ranks other channels' playlists first), so search the cleaned name instead.
-        val query = cleanArtistName(channel.name)
+        val query = cleanName(channel.name)
         if (query.isBlank()) return emptyPagination()
         return runCatching {
             val token = pagination.continuationToken()
@@ -265,7 +268,7 @@ internal class RealMetadataArtistAPI(
     ): PaginationResult<MetadataPlaylist> {
         // The artist's own playlists first, then others that name the artist (fan and label playlists).
         // Unlike albums, a name match is enough here: many artists upload no playlists of their own.
-        val query = cleanArtistName(channel.name)
+        val query = cleanName(channel.name)
         if (query.isBlank()) return emptyPagination()
         return runCatching {
             val token = pagination.continuationToken()
@@ -292,7 +295,10 @@ private fun namesArtist(item: PipedSearchItem, artistName: String): Boolean =
  * matched, since a title that mentions the artist admits other artists' rows. */
 private fun uploadedByArtist(item: PipedSearchItem, channelId: String, artistName: String): Boolean {
     val uploaderId = channelIdOf(item.uploaderUrl)
-    if (uploaderId == channelId) return true
-    val uploaderName = cleanArtistName(item.uploaderName)
-    return uploaderName.equals(artistName, ignoreCase = true)
+    if (uploaderId.isNotEmpty() && uploaderId == channelId) return true
+    val uploaderName = cleanName(item.uploaderName)
+    val expectedName = artistName.trim()
+    return expectedName.isNotBlank() && uploaderName.equals(expectedName, ignoreCase = true)
 }
+
+private fun cleanName(name: String): String = cleanArtistName(name.trimEnd()).trim()
