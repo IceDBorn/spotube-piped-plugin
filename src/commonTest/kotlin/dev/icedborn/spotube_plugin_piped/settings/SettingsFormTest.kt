@@ -1,5 +1,6 @@
 package dev.icedborn.spotube_plugin_piped.settings
 
+import dev.icedborn.spotube_plugin_piped.sync.StorageState
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -7,6 +8,22 @@ import kotlin.test.assertTrue
 
 /** The settings form posts each change; a select must show the stored value and carry the name the handler reads. */
 class SettingsFormTest {
+
+    @Test
+    fun `the storage switch shows its value and state`() {
+        val on = settingsFormHtml(
+            "", "", "", lightTheme = true, region = "AUTO", detectedRegion = null, channel = "AUTO",
+            storageSync = true, storageState = storageStateText(StorageState.ACTIVE),
+        )
+        assertTrue(on.contains("""id="storageSync" type="checkbox" checked"""))
+        assertTrue(on.contains("Active"))
+        val off = settingsFormHtml(
+            "", "", "", lightTheme = true, region = "AUTO", detectedRegion = null, channel = "AUTO",
+            storageSync = false, storageState = storageStateText(StorageState.UNSUPPORTED),
+        )
+        assertTrue(off.contains("""id="storageSync" type="checkbox">"""))
+        assertTrue(off.contains("no storage"))
+    }
 
     private fun html(channel: String = "AUTO", library: String = LibraryPlaylist.ALWAYS.name) = settingsFormHtml(
         instance = "https://piped.example",

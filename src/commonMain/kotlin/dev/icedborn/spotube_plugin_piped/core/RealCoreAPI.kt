@@ -7,6 +7,9 @@ import dev.icedborn.spotube_plugin_piped.settings.RegionSetting
 import dev.icedborn.spotube_plugin_piped.settings.UpdateChannel
 import dev.icedborn.spotube_plugin_piped.settings.UpdateChannelSetting
 import dev.icedborn.spotube_plugin_piped.settings.settingsFormHtml
+import dev.icedborn.spotube_plugin_piped.settings.storageStateText
+import dev.icedborn.spotube_plugin_piped.sync.StorageMode
+import dev.icedborn.spotube_plugin_piped.sync.StorageSyncSetting
 import dev.krtirtho.plugin_interfaces.extras.logger.Logger
 import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI
 import dev.krtirtho.plugin_interfaces.host_apis.HttpMethod
@@ -26,6 +29,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -61,6 +65,9 @@ internal class RealCoreAPI(
     private val region: RegionSetting,
     private val channel: UpdateChannelSetting? = null,
     private val libraryPlaylist: LibraryPlaylistSetting? = null,
+    private val storageSetting: StorageSyncSetting? = null,
+    private val storageMode: StorageMode? = null,
+    private val onSettingSaved: suspend (String) -> Unit = {},
     private val onLogin: suspend () -> Unit = {},
     private val updateChecker: UpdateChecker = UpdateChecker(httpClient, channel),
     // The plugin passes its main scope; tests pass one on their own dispatcher.
@@ -303,10 +310,13 @@ internal class RealCoreAPI(
         try {
             webView.postMessagesFlow().onEach { messages.trySend(it) }.launchIn(this)
             val lightTheme = runCatching { storage.getString(FORM_THEME_KEY) }.getOrNull() == "light"
+            val storageOn = storageSetting?.enabled() ?: true
+            val storageText = storageMode?.state()?.let(::storageStateText).orEmpty()
             val html = settingsFormHtml(
                 instance, playback, username, lightTheme, region.stored(), region.detected(),
                 channel?.stored()?.name ?: UpdateChannel.AUTO.name,
                 library = libraryPlaylist?.stored()?.name ?: LibraryPlaylist.ALWAYS.name,
+                storageSync = storageOn, storageState = storageText,
                 nonce = nonce, manage = manage, signedInAs = signedIn?.username, signedInOn = signedIn?.instance,
             )
             webView.navigateToHTML(html)
@@ -322,7 +332,10 @@ internal class RealCoreAPI(
     /** Applies a setting the form changed in place. False for any other action. */
     private suspend fun applySetting(action: String?, fields: JsonObject, manage: Boolean): Boolean {
         when (action) {
-            "region" -> runCatching { region.set(fields["region"]?.jsonPrimitive?.contentOrNull.orEmpty()) }
+            "region" -> runCatching {
+                region.set(fields["region"]?.jsonPrimitive?.contentOrNull.orEmpty())
+                onSettingSaved("piped.region")
+            }
 
             "channel" -> {
                 val name = fields["channel"]?.jsonPrimitive?.contentOrNull
@@ -334,8 +347,19 @@ internal class RealCoreAPI(
             "library" -> {
                 val name = fields["library"]?.jsonPrimitive?.contentOrNull
                 val mode = LibraryPlaylist.entries.firstOrNull { it.name == name }
-                if (mode != null) runCatching { libraryPlaylist?.set(mode) } else coreLog.w { "unknown library playlist setting: $name" }
+                if (mode != null) {
+                    runCatching {
+                        libraryPlaylist?.set(mode)
+                        onSettingSaved("piped.library.placeholder")
+                    }
+                } else {
+                    coreLog.w { "unknown library playlist setting: $name" }
+                }
             }
+
+            "storage" -> runCatching {
+                storageSetting?.set(fields["enabled"]?.jsonPrimitive?.booleanOrNull != false)
+            }.onFailure { coreLog.w { "storage switch not saved: ${it.message}" } }
 
             "theme" -> saveTheme(fields)
 
