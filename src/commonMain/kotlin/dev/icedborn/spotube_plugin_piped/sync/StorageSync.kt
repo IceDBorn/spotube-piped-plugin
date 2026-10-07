@@ -43,7 +43,8 @@ internal class StorageSync(
     private val marks = DirtyMarks(store)
     val libraryKind = SyncedLibrary(LwwStore(store, "lib"), library)
     val settingsKind = SyncedSettings(LwwStore(store, "set"), region, libraryPlaylist)
-    private val kinds: List<SyncKind> = listOf(libraryKind, settingsKind)
+    val playlistsKind = SyncedPlaylists(LwwStore(store, "pl"), store, library)
+    private val kinds: List<SyncKind> = listOf(libraryKind, settingsKind, playlistsKind)
     private val engine = SyncEngine(http, store, owner, marks, kinds, now)
     private var flushJob: Job? = null
 
@@ -93,6 +94,14 @@ internal class StorageSync(
         marks.mark(settingsKind.suffix)
     }
 
+    suspend fun playlistTouched(localId: String): Boolean {
+        val account = activeAccount() ?: return false
+        owner.ensure(account)
+        playlistsKind.touch(localId, now())
+        marks.mark(playlistsKind.suffix)
+        return true
+    }
+
     private suspend fun importOnce(account: PipedAccount, previous: AccountCacheState?) {
         val stamp = accountStamp(account)
         if ((store.get(IMPORTED_KEY) as? JsonPrimitive)?.contentOrNull == stamp) return
@@ -104,6 +113,7 @@ internal class StorageSync(
         )
         libraryKind.importLocal(extra)
         settingsKind.importLocal()
+        playlistsKind.importLocal()
         kinds.forEach { marks.mark(it.suffix) }
         store.put(IMPORTED_KEY, JsonPrimitive(stamp))
     }

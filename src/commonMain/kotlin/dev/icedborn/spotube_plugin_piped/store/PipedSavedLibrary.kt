@@ -111,14 +111,19 @@ internal class PipedSavedLibrary(
         }
     }
 
-    suspend fun mirrorCreatePlaylist(localId: String, name: String, videoIds: List<String>): String? =
-        playlists.create(localId, name, videoIds)
+    suspend fun mirrorCreatePlaylist(localId: String, name: String, videoIds: List<String>): String? {
+        if (sync?.playlistTouched(localId) == true) return null
+        return playlists.create(localId, name, videoIds)
+    }
 
-    suspend fun mirrorAddTracks(localId: String, videoIds: List<String>): Boolean = playlists.addTracks(localId, videoIds)
+    suspend fun mirrorAddTracks(localId: String, videoIds: List<String>): Boolean =
+        sync?.playlistTouched(localId) == true || playlists.addTracks(localId, videoIds)
 
-    suspend fun mirrorRemoveTracks(localId: String, videoIds: List<String>): Boolean = playlists.removeTracks(localId, videoIds)
+    suspend fun mirrorRemoveTracks(localId: String, videoIds: List<String>): Boolean =
+        sync?.playlistTouched(localId) == true || playlists.removeTracks(localId, videoIds)
 
-    suspend fun mirrorRenamePlaylist(localId: String, name: String): Boolean = playlists.rename(localId, name)
+    suspend fun mirrorRenamePlaylist(localId: String, name: String): Boolean =
+        sync?.playlistTouched(localId) == true || playlists.rename(localId, name)
 
-    suspend fun mirrorDeletePlaylist(localId: String): Boolean = playlists.delete(localId)
+    suspend fun mirrorDeletePlaylist(localId: String): Boolean = sync?.playlistTouched(localId) == true || playlists.delete(localId)
 }

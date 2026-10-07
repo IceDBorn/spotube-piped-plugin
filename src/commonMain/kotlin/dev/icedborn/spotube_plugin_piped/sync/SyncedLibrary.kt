@@ -7,6 +7,8 @@ import kotlinx.serialization.json.JsonPrimitive
 
 private val SAVED = JsonPrimitive(1)
 
+private fun isLocalPlaylist(id: String) = id.startsWith(LOCAL_PLAYLIST_PREFIX)
+
 internal fun libraryKey(kind: SavedKind, id: String): String = when (kind) {
     SavedKind.TRACK -> "t:$id"
     SavedKind.ALBUM -> "a:$id"
@@ -22,7 +24,7 @@ internal class SyncedLibrary(override val own: LwwStore, private val library: Lo
     }
 
     suspend fun recordPlaylists(ids: List<String>, saved: Boolean, at: Long) {
-        own.record(ids.map { LwwEntry("p:$it", at, SAVED.takeIf { saved }) })
+        own.record(ids.filterNot(::isLocalPlaylist).map { LwwEntry("p:$it", at, SAVED.takeIf { saved }) })
     }
 
     /** Snapshot items join the local library too, since storage mode reads saved state only from there. */
@@ -32,14 +34,14 @@ internal class SyncedLibrary(override val own: LwwStore, private val library: Lo
         extra[SavedKind.ARTIST]?.takeIf { it.isNotEmpty() }?.let { library.saveArtists(it) }
         val entries = SavedKind.entries.flatMap { kind ->
             (localIds(kind) + extra[kind].orEmpty()).distinct().map { LwwEntry(libraryKey(kind, it), 0, SAVED) }
-        } + library.savedPlaylists().map { LwwEntry("p:$it", 0, SAVED) }
+        } + library.savedPlaylists().filterNot(::isLocalPlaylist).map { LwwEntry("p:$it", 0, SAVED) }
         own.recordIfAbsent(entries)
     }
 
     override suspend fun apply(winners: Map<String, Winner>, self: String) {
         val remote = winners.values.filter { it.device != self }
         for (prefix in listOf("t:", "a:", "r:", "p:")) {
-            val ofKind = remote.filter { it.entry.key.startsWith(prefix) }
+            val ofKind = remote.filter { it.entry.key.startsWith(prefix) && !isLocalPlaylist(it.entry.key.removePrefix("p:")) }
             val add = ofKind.filterNot { it.entry.removed }.map { it.entry.key.removePrefix(prefix) }
             val drop = ofKind.filter { it.entry.removed }.map { it.entry.key.removePrefix(prefix) }
             applyKind(prefix, add, drop)
