@@ -24,7 +24,8 @@ internal class SyncedPlaylists(override val own: LwwStore, private val store: En
     private suspend fun touched(): Map<String, Long> = store.getDecoded(TOUCHED_KEY, touchedSerializer).orEmpty()
 
     suspend fun touch(localId: String, at: Long) = lock.withLock {
-        val updated = touched() + (localId to at)
+        val current = touched()
+        val updated = current + (localId to at)
         store.put(TOUCHED_KEY, json.encodeToJsonElement(touchedSerializer, updated))
     }
 

@@ -91,7 +91,8 @@ internal class DirtyMarks(private val store: EntityStore) {
     /** Clears [suffix] only when no mark came after [generation] was read. */
     suspend fun clear(suffix: String, generation: Int) = lock.withLock {
         if (generation(suffix) != generation) return@withLock
-        val remaining = all() - suffix
+        val current = all()
+        val remaining = current - suffix
         val encoded = json.encodeToJsonElement(serializer, remaining)
         store.put(DIRTY_KEY, encoded)
     }

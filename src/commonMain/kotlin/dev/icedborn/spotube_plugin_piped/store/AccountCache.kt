@@ -144,6 +144,8 @@ internal class AccountCache(
 
     private suspend fun refresh(account: PipedAccount) {
         val entries = http.listing(account) ?: return
+        val storageActive = storage?.prepare(account) == true
+        if (storageActive) return refreshWithStorage(account, entries, storage)
         // Bindings a start without a listing could not adopt get their chance on every refresh.
         val localIds = library.storedPlaylists().map { it.id }
         store.adoptBareBindings(account, entries.mapNotNull { it.string("id") }.toHashSet(), bindingKeys(localIds))
@@ -205,6 +207,35 @@ internal class AccountCache(
                 orNull("saved set resolution") { resolver.resolve(account, start, previous, mirrorIds, mirrorState) }
             }
         }
+    }
+
+    /** Storage holds the saved sets, so the mirrors are neither walked nor resolved. The history log stays. */
+    private suspend fun refreshWithStorage(account: PipedAccount, entries: List<JsonObject>, storage: StorageSync) {
+        val previous = store.cachedAccountState()?.takeIf { sameAccount(it, account) }
+        val historySince = historySync.generation
+        val historyId = historySync.playlistIn(account, entries)
+        val listed = attribute(account, entries).filter { it.kind == null }
+        val walks = listed.mapConcurrently(3) { item ->
+            val isLog = item.uuid == historyId
+            val walk = if (isLog) http.walk(account, item.uuid, pageLimit = MIRROR_PAGE_LIMIT) else http.walk(account, item.uuid)
+            if (!isLog) store.rememberTracks(walk.rows)
+            item to walk
+        }
+        if (!stillSignedIn(account)) return
+        orNull("storage sync") { storage.sync(account, previous) }
+        if (!stillSignedIn(account)) return
+        val playlists = mutableListOf<CachedAccountPlaylist>()
+        for ((item, walk) in walks) {
+            if (item.uuid == historyId) continue
+            val total = listedCount(item.entry) ?: -1
+            rows.cacheWalk(item.uuid, walk, total)
+            playlists += CachedAccountPlaylist(item.uuid, item.entry.string("name").orEmpty(), total)
+        }
+        val state =
+            AccountCacheState(playlists = playlists, refreshedAt = epochMillis(), instance = account.instance, username = account.username)
+        store.cacheAccountState(state)
+        val historyWalk = walks.firstOrNull { it.first.uuid == historyId }?.second?.takeIf(::provenEnd)
+        syncHistory(account, historyId, historyWalk, historySince)
     }
 
     /** Merges a history log walked to its end, then trims it and retries the waiting plays in the background. */

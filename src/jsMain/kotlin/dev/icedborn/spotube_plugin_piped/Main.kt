@@ -29,6 +29,7 @@ import dev.icedborn.spotube_plugin_piped.store.LocalLibrary
 import dev.icedborn.spotube_plugin_piped.store.PipedSavedLibrary
 import dev.icedborn.spotube_plugin_piped.store.PlayHistory
 import dev.icedborn.spotube_plugin_piped.store.StorageMigration
+import dev.icedborn.spotube_plugin_piped.sync.StorageSync
 import dev.krtirtho.plugin_interfaces.core.runPluginInitialized
 import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI
 import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI_SERVICE_NAME
@@ -88,11 +89,21 @@ private suspend fun start() {
     val client = PipedClient(httpClient) { instanceSource.requireApi() }
     val albumLookup = AlbumLookup(client, store)
     val history = PlayHistory(store)
-    val mirror = PipedSavedLibrary(httpClient, store, library, albumLookup, instanceSource, initScope, history) { session.load() }
     // Bound by every host version; older hosts without it fall back to the Global charts.
     val systemInfo = runCatching { zipline.take<SystemInformationAPI>(SystemInformationAPI_SERVICE_NAME) }.getOrNull()
     val region = RegionSetting(store, systemInfo)
     val libraryPlaylist = LibraryPlaylistSetting(store)
+    val storageSync = StorageSync(httpClient, store, library, region, libraryPlaylist, initScope) { session.load() }
+    val mirror = PipedSavedLibrary(
+        httpClient,
+        store,
+        library,
+        albumLookup,
+        instanceSource,
+        initScope,
+        history,
+        storageSync,
+    ) { session.load() }
     val core = RealCoreAPI(
         httpClient = httpClient,
         storage = storage,
@@ -102,6 +113,9 @@ private suspend fun start() {
         region = region,
         channel = UpdateChannelSetting(store),
         libraryPlaylist = libraryPlaylist,
+        storageSetting = storageSync.setting,
+        storageMode = storageSync.mode,
+        onSettingSaved = { storageSync.settingChanged(it) },
         onLogin = {
             migration.adoptBareBindings()
             mirror.refreshCache()
