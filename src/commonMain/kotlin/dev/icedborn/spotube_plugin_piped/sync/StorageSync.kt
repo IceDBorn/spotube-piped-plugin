@@ -28,8 +28,8 @@ internal class StorageSync(
     httpClient: HttpClientAPI,
     private val store: EntityStore,
     private val library: LocalLibrary,
-    region: RegionSetting,
-    libraryPlaylist: LibraryPlaylistSetting,
+    private val region: RegionSetting,
+    private val libraryPlaylist: LibraryPlaylistSetting,
     private val scope: CoroutineScope,
     private val now: () -> Long = { epochMillis() },
     random: Random = Random.Default,
@@ -42,7 +42,8 @@ internal class StorageSync(
     private val owner = SyncOwner(store, random)
     private val marks = DirtyMarks(store)
     val libraryKind = SyncedLibrary(LwwStore(store, "lib"), library)
-    private val kinds: List<SyncKind> = listOf(libraryKind)
+    val settingsKind = SyncedSettings(LwwStore(store, "set"), region, libraryPlaylist)
+    private val kinds: List<SyncKind> = listOf(libraryKind, settingsKind)
     private val engine = SyncEngine(http, store, owner, marks, kinds, now)
     private var flushJob: Job? = null
 
@@ -84,6 +85,14 @@ internal class StorageSync(
         marks.mark(libraryKind.suffix)
     }
 
+    suspend fun settingChanged(key: String) {
+        if (key !in SYNCED_SETTING_KEYS) return
+        val account = activeAccount() ?: return
+        owner.ensure(account)
+        settingsKind.record(key, now())
+        marks.mark(settingsKind.suffix)
+    }
+
     private suspend fun importOnce(account: PipedAccount, previous: AccountCacheState?) {
         val stamp = accountStamp(account)
         if ((store.get(IMPORTED_KEY) as? JsonPrimitive)?.contentOrNull == stamp) return
@@ -94,6 +103,7 @@ internal class StorageSync(
             SavedKind.ARTIST to snapshot?.savedArtists.orEmpty(),
         )
         libraryKind.importLocal(extra)
+        settingsKind.importLocal()
         kinds.forEach { marks.mark(it.suffix) }
         store.put(IMPORTED_KEY, JsonPrimitive(stamp))
     }
