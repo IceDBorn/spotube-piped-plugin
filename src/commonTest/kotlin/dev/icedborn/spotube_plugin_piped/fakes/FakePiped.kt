@@ -55,6 +55,11 @@ class FakePiped(var pageSize: Int = 2) : HttpClientAPI {
     val users = HashMap<String, String>()
     var registrationOpen = true
 
+    /** Storage files per "<user>/<name>", as body to etag. */
+    val files = mutableMapOf<String, Pair<String, String>>()
+    var storageEnabled = true
+    private var etagSerial = 0
+
     /** Virtual delay before every answer. */
     var latencyMs = 0L
     private val searches = mutableListOf<Pair<(String) -> Boolean, List<JsonObject>>>()
@@ -114,7 +119,13 @@ class FakePiped(var pageSize: Int = 2) : HttpClientAPI {
         }
         val path = "/" + url.substringAfter("://").substringAfter('/', "")
         return when {
+            method == HttpMethod.Post && path == "/storage/put" -> storagePut(requestHeaders, body.orEmpty())
+
             method == HttpMethod.Post -> post(path, body.orEmpty())
+
+            path.startsWith("/storage/stat?") -> storageStat(path, requestHeaders)
+
+            path.startsWith("/storage/get?") -> storageGet(path, requestHeaders)
 
             path == "/user/playlists" -> listing(requestHeaders)
 
@@ -132,7 +143,7 @@ class FakePiped(var pageSize: Int = 2) : HttpClientAPI {
 
             path.startsWith("/channel/") -> channel(path.removePrefix("/channel/"))
 
-            path == "/config" -> ok("{}")
+            path == "/config" -> ok("""{"s3Enabled":$storageEnabled}""")
 
             else -> notFound()
         }
@@ -152,6 +163,44 @@ class FakePiped(var pageSize: Int = 2) : HttpClientAPI {
             }
         }
         return ok(body.toString())
+    }
+
+    private fun storageError(message: String) = HttpResponse(500, emptyMap(), """{"error":"$message"}""")
+
+    private fun storageUser(headers: Map<String, String>?): String? =
+        headers?.get("Authorization")?.takeIf { it.startsWith("token-") }?.removePrefix("token-")
+
+    private fun storageKey(headers: Map<String, String>?, name: String?): Pair<String?, HttpResponse?> {
+        if (!storageEnabled) return null to storageError("Storage is not configured on this instance!")
+        if (name == null || !Regex("^[A-Za-z0-9]{1,32}$").matches(name)) return null to storageError("Invalid path provided!")
+        val user = storageUser(headers) ?: return null to storageError("Invalid session provided!")
+        return "$user/$name" to null
+    }
+
+    private fun storageStat(path: String, headers: Map<String, String>?): HttpResponse {
+        val (key, error) = storageKey(headers, path.substringAfter("file=", "").ifEmpty { null })
+        error?.let { return it }
+        val file = files[key] ?: return ok("""{"status":"not_exists"}""")
+        return ok("""{"status":"exists","etag":"${file.second}","date":0}""")
+    }
+
+    private fun storageGet(path: String, headers: Map<String, String>?): HttpResponse {
+        val (key, error) = storageKey(headers, path.substringAfter("file=", "").ifEmpty { null })
+        error?.let { return it }
+        val file = files[key] ?: return storageError("The specified key does not exist.")
+        return HttpResponse(200, emptyMap(), file.first)
+    }
+
+    private fun storagePut(headers: Map<String, String>?, body: String): HttpResponse {
+        val (key, error) = storageKey(headers, headers?.get("x-file-name"))
+        error?.let { return it }
+        if (body.encodeToByteArray().size > 500 * 1024) return storageError("File size is too large!")
+        val existing = files[key!!]
+        if (existing != null && existing.second != headers?.get("x-last-etag")) {
+            return storageError("Invalid etag provided! (File uploaded by another client?)")
+        }
+        files[key] = body to "e${++etagSerial}"
+        return ok("""{"status":"ok"}""")
     }
 
     private fun page(id: String, offset: Int): HttpResponse {
