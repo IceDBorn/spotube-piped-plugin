@@ -35,6 +35,11 @@ The **Settings** tab:
   latest release, *Nightly* at both and offers the newer of the two.
 - **Library playlist**: the playlist the plugin adds to Library -> Playlists. *Always show Recently played* is the
   default, see [Known limitations](#known-limitations).
+- **Sync through Piped storage**: on by default. When the instance has Piped storage and an account is signed in,
+  saved tracks, albums, artists and playlists, your local playlists, the chart region and the library playlist
+  setting sync between your devices through storage files on the account, instead of the "Spotube - Favorites",
+  "Spotube - Albums" and "Spotube - Artists" playlists. The line under the switch says whether storage is active.
+  Storage files are not visible on the Piped web site, and the instance's admin can read them.
 
 After switching from Nightly to Stable, no update is offered until a stable release is newer than the installed
 nightly. To go back sooner, reinstall a stable build from the
@@ -191,6 +196,15 @@ Opening an album from a track waits up to 4 seconds for the album lookup, which 
 seconds the plugin shows a placeholder while the lookup finishes in the background, and opening the album again
 shows it.
 
+### Storage requests
+
+With storage active, a save or unsave costs no request at once. Changes go out 30 seconds after the first one,
+and at each account refresh: 2 requests per changed kind (library, settings, playlists) plus 2 for the device's
+manifest. Each refresh reads the device list and each other device's manifest, 1 request each, and fetches only
+the files that changed. The storage check costs 2 requests and runs at most once a day. The first sync on a device
+also writes the device into the device list, 2 or 3 requests, and reads its own manifest, 1 or 2 requests. The
+history log keeps its playlist and its costs.
+
 [docs/design.md](docs/design.md) lists the storage keys, the index format and the row cache rules.
 
 ## Build
@@ -271,3 +285,6 @@ sign-in and when a write to the account fails, so check a log before sharing it.
   neither it adds nothing. The Library playlist setting controls the entry: *Only when there are no playlists* adds
   it only while you have no other playlist, and *Off* removes it, which also hides the Liked tracks card when no
   other playlist exists. The entry cannot be edited or deleted.
+- Turning storage off later goes back to the mirror playlists as they were when storage turned on. Storage never
+  writes to them, so anything unsaved while storage was on comes back on the next refresh, and anything saved
+  during that time is missing from them.

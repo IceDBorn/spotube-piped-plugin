@@ -1,7 +1,7 @@
 # Design notes
 
 These notes cover the parts of the plugin whose rules span several files: the row cache, the storage keys, the
-mirror index, the history log and endless playback.
+mirror index, storage sync, the history log and endless playback.
 
 ## Row cache
 
@@ -135,6 +135,25 @@ Eviction treats a key without an access stamp as used at the time of the evictio
 Every binding carries the account it belongs to. A binding of another instance or username is ignored for writes,
 so switching accounts never writes into the previous account's playlists.
 
+### Storage sync
+
+| Key | Value |
+| --- | --- |
+| `piped.storage.sync` | `OFF`; absent means on |
+| `storage.support` | `StorageVerdict` for one account |
+| `storage.device` | This device's id, 8 letters and digits |
+| `storage.owner` | Account stamp the keys below belong to |
+| `storage.own:<suffix>` | Entries this device authored for `lib`, `set` or `pl` |
+| `storage.dirty` | Kinds waiting for a push |
+| `storage.versions` | This device's manifest versions |
+| `storage.manifest.dirty` | The manifest still needs a push |
+| `storage.registered` | This device is in `spdevices` |
+| `storage.registry` | Cached `spdevices` |
+| `storage.etag:<file>` | Etag of the last read of a registry or manifest |
+| `storage.remote:<device>:<suffix>` | Another device's file with its manifest version |
+| `storage.imported` | Account stamp of the finished import |
+| `storage.pl.touched` | Local playlists changed since the last push, with times |
+
 ## Mirror index
 
 Saved tracks, albums and artists are written through to three account playlists: "Spotube - Favorites",
@@ -194,6 +213,96 @@ expires and a later lookup can then map that row to the unsaved id. `saved.gone:
 account and that row, the ids the unsave confirmed. A later resolution does not claim a recorded id from that row,
 but another row that maps to it, such as one added by a save on the web, still brings it back. A save on this
 device lifts the id, and a complete walk without the row drops the row's record.
+
+## Storage sync
+
+When the instance provides Piped storage and the setting is enabled, `StorageSync` syncs saved library items,
+settings, and local playlists through account storage files instead of the playlist mirrors.
+
+### Files and naming conventions
+
+Storage files belong to the account and use short names:
+
+- `spdevices`: Device registry (`DeviceRegistry`) listing registered device ids and their registration timestamps.
+- `sp<device>m`: Device manifest (`DeviceManifest`), mapping kind suffixes (`lib`, `set`, `pl`) to version numbers.
+- `sp<device><suffix>`: Synced data documents (`SyncDoc`) authored by a device (`lib` for library items, `set` for
+  settings, `pl` for local playlists). Each document holds a list of `LwwEntry` records.
+
+Each device generates a random 8-character lowercase alphanumeric id stored in `storage.device`.
+
+### LWW entries and resolution
+
+Every entry is `{"k": key, "a": at, "v": value}`, where `at` is epoch milliseconds and a missing or null `v` is a
+removal. Library keys are `t:<id>`, `a:<id>`, `r:<canonical artist id>` and `p:<id>` with `v = 1`. Settings keys
+are `piped.region` and `piped.library.placeholder` with the stored value. A playlist key is the local playlist id
+with the whole `StoredPlaylist` as value. A file whose `v` field is not 1, or that lacks its list, is a failed fetch.
+
+`mergeLww` picks, per key, the entry with the highest `at`. A tie goes to the larger device id.
+
+### Imports at time zero
+
+The first sync of an account imports the local library, the snapshot's saved sets, the two settings and every
+local playlist with `at = 0`, so any later change on any device wins over them. `storage.imported` records the
+account stamp. Imported settings never override another device; only a change made in Settings (`at > 0`) does.
+
+### Manifest and versions
+
+`storage.versions` holds a counter per kind, raised after each confirmed push and published in `sp<device>m`. When
+the counter is missing, after a reset or an account switch, the device starts from its published manifest, so it
+never reuses a number another device has cached.
+
+At each refresh, the device reads the registry and each other device's manifest, fetching only the data files whose
+version differs from the one cached in `storage.remote:<device>:<suffix>`. The manifest etag is kept only when
+every changed file arrived, so a failed read is retried at the next refresh.
+
+### Device registry compare-and-swap
+
+`spdevices` is the only file more than one device writes. A device adds itself on its first sync: it stats the
+file, reads it when it exists, appends its id and puts it back with the stat's etag in `x-last-etag` (no etag when
+the file is missing). An "Invalid etag" answer starts the round again, at most 3 times. A registry that does not
+decode is never overwritten, since that would drop every other device.
+
+### Own files
+
+Every other file has one writer, its device. A push stats the file and puts it with that etag. A conflict means an
+earlier put landed late, so the device stats once more and retries once.
+
+### Dirty marks
+
+A change marks its kind in `storage.dirty` and schedules a push 30 seconds later. Each mark also bumps an in-memory
+counter for the kind. A push reads the counter before it uploads and clears the mark only when the counter has not
+moved, so a change made during the upload stays marked for the next push.
+
+### Local playlists and the size cap
+
+A playlist change records its id and time in `storage.pl.touched`. The entry is built from the stored playlist at
+push time, and a pull never overwrites a touched playlist. A cover image over 16,384 characters is sent as an empty
+string, and a device that receives an empty image keeps its own. A pulled playlist is added to the library list,
+and a pulled delete removes it. Ids with the local `piped-` prefix stay out of the library kind, so only the
+playlist kind decides whether a local playlist is listed.
+
+A file holds at most 500,000 bytes (`MAX_FILE_BYTES`; the backend allows 512,000). `fitToCap` drops the oldest
+removals first. When the live entries alone do not fit, the file is not sent and its kind stays marked.
+
+### Library and refresh in storage mode
+
+With storage active, saved state comes only from `piped.library`. A save or unsave records an entry and writes the
+local library, and an unsave skips the mirror ownership check. The first sync adds the items of the last playlist
+snapshot to the local library, so items saved on other devices through the mirrors stay saved. A pull applies only
+other devices' winning entries.
+
+The account refresh skips the three mirror playlists and their resolution, still caches the account's own
+playlists, and keeps walking and merging the history log. It runs the storage sync before it writes a snapshot
+with empty saved sets, so the import still reads the old ones. A failed storage sync does not stop the refresh.
+
+### Owner reset and detection
+
+When another account signs in, every key under `ACCOUNT_SYNC_PREFIXES` is cleared. `storage.device` and
+`storage.support` stay.
+
+Detection runs inside the account refresh when the account has no verdict or the last check is older than 24 hours
+(`SUPPORT_RECHECK_MS`). It reads `/config` for `"s3Enabled"`, then stats `spdevices` with the session. A failed read
+keeps the previous verdict. The verdict in `storage.support` counts only for its instance and username.
 
 ## History log
 
