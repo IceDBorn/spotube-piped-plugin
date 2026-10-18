@@ -313,3 +313,5 @@ sign-in and when a write to the account fails, so check a log before sharing it.
 - Turning storage off later goes back to the mirror playlists as they were when storage turned on. Storage never
   writes to them, so anything unsaved while storage was on comes back on the next refresh, and anything saved
   during that time is missing from them.
+- Saves and unsaves made on a device with storage off reach only its mirror playlists. Devices with storage on
+  never read the mirrors, so they miss those changes until the device turns storage on and makes them again.

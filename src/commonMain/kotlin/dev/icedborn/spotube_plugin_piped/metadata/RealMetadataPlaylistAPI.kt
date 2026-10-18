@@ -286,8 +286,9 @@ internal class RealMetadataPlaylistAPI(
             val added = removed && mirror.mirrorAddTracks(id, updated.trackIds)
             if (!added) throw IllegalStateException("Piped playlist mirror rebuild failed")
         }
-        if (updated != existing) mirror.touchPlaylist(id)
         library.upsertPlaylist(updated)
+        // After the save, so a push that reads the record in between never clears the touch with the old one.
+        if (updated != existing) mirror.touchPlaylist(id)
         return updated.toEntity()
     }
 

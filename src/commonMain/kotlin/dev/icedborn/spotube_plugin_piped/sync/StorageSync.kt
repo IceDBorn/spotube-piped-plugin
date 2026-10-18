@@ -23,6 +23,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlin.random.Random
@@ -63,6 +65,8 @@ internal class StorageSync(
     private val engine = SyncEngine(http, store, owner, marks, kinds, now)
     private var flushJob: Job? = null
     private var markedDuringFlush = false
+    private var flushing = false
+    private val historyLock = Mutex()
 
     init {
         marks.onMark = { scheduleFlush() }
@@ -139,14 +143,20 @@ internal class StorageSync(
     suspend fun played(track: MetadataTrack): Boolean {
         val account = activeAccount() ?: return false
         if (!YOUTUBE_VIDEO_ID.matches(track.id)) return true
-        val imported = historyImported(account)
         store.forAccount(account) {
             store.rememberTrack(track)
             dictionary.note(listOf(track.id))
-            // The import either turns the local counts into the baseline or restores files without this play.
-            if (imported) historyKind.record(track.id, now()) else historyKind.hold(track.id, now())
+            historyLock.withLock { recordOrHold(account, track.id) }
         }
         return true
+    }
+
+    // Runs under the import's lock, so a play never lands between the import's release of the held plays and its stamp.
+    private suspend fun recordOrHold(account: PipedAccount, videoId: String) {
+        val at = now()
+        val imported = historyImported(account)
+        // The import either turns the local counts into the baseline or restores files without this play.
+        if (imported) historyKind.record(videoId, at) else historyKind.hold(videoId, at)
     }
 
     suspend fun historyImported(account: PipedAccount): Boolean = store.forAccount(account) {
@@ -192,9 +202,11 @@ internal class StorageSync(
         store.put(IMPORTED_KEY, JsonPrimitive(stamp))
     }
 
+    private suspend fun importHistoryOnce(account: PipedAccount) = historyLock.withLock { importHistoryLocked(account) }
+
     /** The local counts become this device's baseline, and the tracks behind them go into the dictionary. A device
      * that published plays for the account before gets its own files back instead, since the local counts hold them. */
-    private suspend fun importHistoryOnce(account: PipedAccount) {
+    private suspend fun importHistoryLocked(account: PipedAccount) {
         // A play held while an earlier import was finishing is counted at the next refresh.
         if (historyImported(account)) {
             historyKind.releaseHeld(count = true)
@@ -216,9 +228,14 @@ internal class StorageSync(
         store.rememberTracks(local.map { it.track })
         val saved = library.savedTracks()
         dictionary.note(local.map { it.track.id } + saved)
-        if (published.isEmpty()) historyKind.importBaseline()
+        if (published.isEmpty()) {
+            historyKind.importBaseline()
+            // The baseline holds the waiting plays. They go before the stamp, or a failed drop would count them again.
+            val dropped = historyKind.releaseHeld(count = false)
+            if (!dropped) return
+        }
         val stamped = store.put(HISTORY_IMPORTED_KEY, JsonPrimitive(accountStamp(account)))
-        if (stamped) historyKind.releaseHeld(count = published.isNotEmpty())
+        if (stamped && published.isNotEmpty()) historyKind.releaseHeld(count = true)
     }
 
     /** Copies this profile's skips into the own taste file once per account, so other devices see them too. */
@@ -236,7 +253,8 @@ internal class StorageSync(
 
     private fun scheduleFlush() {
         if (flushJob?.isActive == true) {
-            markedDuringFlush = true
+            // A mark during the delay is pushed by the coming flush. One during the uploads needs another flush.
+            if (flushing) markedDuringFlush = true
             return
         }
         flushJob = scope.launch {
@@ -244,11 +262,12 @@ internal class StorageSync(
                 markedDuringFlush = false
                 delay(FLUSH_DELAY_MS)
                 val account = activeAccount() ?: return@launch
+                flushing = true
                 val left = store.forAccount(account) {
                     orNull("storage flush") { engine.flush(account) }
                     marks.all().isNotEmpty()
                 }
-                // A mark during the delay is pushed by this flush. One during the uploads stays, and gets another flush.
+                flushing = false
             } while (markedDuringFlush && left)
         }
     }

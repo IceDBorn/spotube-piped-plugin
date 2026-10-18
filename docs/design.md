@@ -356,8 +356,9 @@ So a device that holds the new `agg` and an old copy of the emptied segment coun
 the old `agg` and the emptied segment undercounts until the new `agg` arrives, and `combinePlays` keeps the higher
 count it showed before. The fold writes `agg`, empties the segment, then moves the cursor. When a write fails, the
 play goes into the open segment and the next play retries the fold, which skips generations `w` already covers.
-`agg` is pushed before the segments and keeps the 5,000 most played folded tracks. When its put fails, the flush
-sends none of the segments, so other devices never get an emptied segment without the counts folded from it.
+`agg` is pushed before the segments and keeps the 5,000 most played folded tracks. When its put fails or it is
+over the size cap, the flush sends none of the segments, so other devices never get an emptied segment without the
+counts folded from it.
 
 The first sync per account writes the device's `history.tracks` counts into `agg` as `b:<videoId>` entries at
 time 0, after one last merge of the history log. Plays recorded before that import wait in `storage.hist.pending`,
@@ -366,8 +367,10 @@ published plays for this account before its sync state was dropped, for example 
 migration, and `history.tracks` holds them. The import then reads those files back into `storage.own:` and sets
 `storage.hist.cursor` to the newest generation of their events, at least one above `w`, instead of writing a new
 baseline that would count them twice. The restored files lack the waiting plays, so the import records them as
-events with their own times. A new baseline already counts them, so it drops them instead. A failed read leaves the
-import and the waiting plays to the next refresh.
+events with their own times. A new baseline already counts them, so it drops them before it stamps the
+import. A failed read leaves the import and the waiting plays to the next refresh, and a waiting play whose record
+fails stays for the next release. Plays and the import share a lock, so no play lands between the release and the
+stamp.
 
 A pull counts, per track, every device's events above its `w` and folded counts plus the largest baseline of any
 device. Baselines overlap, because the history log already spread plays between devices. The 400 tracks with the

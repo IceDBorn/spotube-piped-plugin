@@ -49,37 +49,55 @@ internal class SyncedHistory(
 
     private fun segmentOf(gen: Long) = segments[(gen % segments.size).toInt()]
 
-    suspend fun record(videoId: String, at: Long) {
-        val touched = lock.withLock { recordLocked(videoId, at) }
+    /** False when the event could not be stored. */
+    suspend fun record(videoId: String, at: Long): Boolean {
+        val touched = mutableListOf<String>()
+        val stored = lock.withLock { recordLocked(videoId, at, touched) }
         touched.forEach { marks.mark(it) }
+        return stored
     }
 
     /** Keeps a play made before the history import finished, for [releaseHeld]. */
     suspend fun hold(videoId: String, at: Long) = lock.withLock {
-        val held = store.getDecoded(HELD_KEY, heldSerializer).orEmpty() + HeldPlay(videoId, at)
-        store.put(HELD_KEY, json.encodeToJsonElement(heldSerializer, held.takeLast(HISTORY_PENDING_LIMIT)))
+        val current = heldPlays()
+        val held = (current + HeldPlay(videoId, at)).takeLast(HISTORY_PENDING_LIMIT)
+        store.put(HELD_KEY, json.encodeToJsonElement(heldSerializer, held))
     }
 
-    /** Records the held plays with their times. With [count] false they are dropped, as a new baseline holds them. */
-    suspend fun releaseHeld(count: Boolean) {
-        val held = lock.withLock {
-            val current = store.getDecoded(HELD_KEY, heldSerializer).orEmpty()
-            if (current.isNotEmpty()) store.remove(HELD_KEY)
-            current
+    /** Records the held plays with their times. With [count] false they are dropped, as a new baseline holds them.
+     * A play whose record fails stays held. False when the remaining plays could not be stored. */
+    suspend fun releaseHeld(count: Boolean): Boolean {
+        val held = lock.withLock { heldPlays() }
+        if (held.isEmpty()) return true
+        val kept = mutableListOf<HeldPlay>()
+        if (count) {
+            for (play in held) {
+                val stored = record(play.id, play.at)
+                if (!stored) kept += play
+            }
         }
-        if (count) held.forEach { record(it.id, it.at) }
+        return lock.withLock {
+            val current = heldPlays()
+            // Plays held since the first read stay too.
+            val remaining = kept + (current - held.toSet())
+            store.put(HELD_KEY, json.encodeToJsonElement(heldSerializer, remaining))
+        }
     }
 
-    private suspend fun recordLocked(videoId: String, at: Long): List<String> {
+    private suspend fun heldPlays(): List<HeldPlay> {
+        val stored = store.getDecoded(HELD_KEY, heldSerializer)
+        return stored.orEmpty()
+    }
+
+    private suspend fun recordLocked(videoId: String, at: Long, touched: MutableList<String>): Boolean {
         val cursor = store.getDecoded(CURSOR_KEY, HistoryCursor.serializer()) ?: HistoryCursor()
         var gen = cursor.gen
-        val touched = mutableListOf<String>()
         val open = segmentOf(gen).entries()
         if (open.size >= segmentEvents && reuse(gen + 1, at, touched)) gen++
         val segment = segmentOf(gen)
-        segment.record(listOf(LwwEntry(eventKey(videoId, at), at, JsonPrimitive(gen))))
-        touched += segment.suffix
-        return touched
+        val stored = segment.record(listOf(LwwEntry(eventKey(videoId, at), at, JsonPrimitive(gen))))
+        if (stored) touched += segment.suffix
+        return stored
     }
 
     /** Folds what segment [gen] still holds into `agg`, empties it and moves the cursor there. False keeps the play in

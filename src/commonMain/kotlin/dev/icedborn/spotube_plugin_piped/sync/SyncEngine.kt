@@ -118,7 +118,7 @@ internal class SyncEngine(
         if (manifestOk) store.remove(MANIFEST_DIRTY_KEY)
     }
 
-    /** A file over the size cap is skipped and stays marked, like one whose put failed. False only when the put failed. */
+    /** A file over the size cap is skipped and stays marked, like one whose put failed. False when it was not sent. */
     private suspend fun pushFile(account: PipedAccount, self: String, storeFile: LwwStore, versions: MutableMap<String, Int>): Boolean {
         val suffix = storeFile.suffix
         val generation = marks.generation(suffix)
@@ -126,7 +126,7 @@ internal class SyncEngine(
         val doc = fitToCap(SyncDoc(device = self, entries = entries))
         if (doc == null) {
             syncLog.w { "storage file $suffix is over the size cap, not sent" }
-            return true
+            return false
         }
         val encodedDoc = encodeDoc(doc)
         val putOk = putOwn(account, dataFile(self, suffix), encodedDoc)

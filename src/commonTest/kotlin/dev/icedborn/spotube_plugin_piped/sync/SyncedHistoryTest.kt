@@ -116,6 +116,20 @@ class SyncedHistoryTest {
     }
 
     @Test
+    fun `a held play whose record fails stays held for the next release`() = runTest {
+        val storage = FakeStorage()
+        val a = Device(FakePiped(), SEGMENT_EVENTS, SEGMENT_COUNT, storage)
+        a.kind.hold(vid(1), 1_000)
+        storage.failPutsFor = "storage.own:h"
+        a.kind.releaseHeld(count = true)
+        storage.failPutsFor = null
+
+        a.kind.releaseHeld(count = true)
+
+        assertEquals(1, a.plays(vid(1)))
+    }
+
+    @Test
     fun `a failed push of the counts holds back the emptied segment`() = runTest {
         val piped = FakePiped()
         val a = device(piped, "aaaa0001", segmentEvents = 2, segmentCount = 3)
