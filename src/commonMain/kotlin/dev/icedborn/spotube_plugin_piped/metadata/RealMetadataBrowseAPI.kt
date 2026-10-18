@@ -5,13 +5,16 @@ import dev.icedborn.spotube_plugin_piped.client.canonicalArtistId
 import dev.icedborn.spotube_plugin_piped.client.toBasic
 import dev.icedborn.spotube_plugin_piped.core.emptyPagination
 import dev.icedborn.spotube_plugin_piped.core.epochMillis
+import dev.icedborn.spotube_plugin_piped.core.localOffsetMinutes
 import dev.icedborn.spotube_plugin_piped.core.mapConcurrently
 import dev.icedborn.spotube_plugin_piped.settings.CHART_COUNTRIES
 import dev.icedborn.spotube_plugin_piped.settings.RegionSetting
+import dev.icedborn.spotube_plugin_piped.store.EntityStore
 import dev.icedborn.spotube_plugin_piped.store.LocalLibrary
 import dev.icedborn.spotube_plugin_piped.store.PipedSavedLibrary
 import dev.icedborn.spotube_plugin_piped.store.PlayHistory
 import dev.icedborn.spotube_plugin_piped.store.orNull
+import dev.icedborn.spotube_plugin_piped.sync.PlaySource
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.album.MetadataAlbum
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.artist.MetadataArtist
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.browse.MetadataBrowseAPI
@@ -49,9 +52,13 @@ internal class RealMetadataBrowseAPI(
     private val albums: RealMetadataAlbumAPI,
     private val playlists: RealMetadataPlaylistAPI,
     private val search: RealMetadataSearchAPI,
+    plays: PlaySource,
+    private val store: EntityStore,
     private val now: () -> Long = ::epochMillis,
+    offsetMinutes: () -> Int = ::localOffsetMinutes,
 ) : MetadataBrowseAPI {
 
+    private var builtProfile = ""
     private val built = HashMap<String, Pair<Long, MetadataBrowseSection?>>()
     private val discovery = Discovery(
         radio = { id -> tracks.radio(listOf(id), ITEMS_PER_SECTION) },
@@ -60,6 +67,15 @@ internal class RealMetadataBrowseAPI(
         playlistsOf = { id -> artists.featuredPlaylists(id, null).items },
         searchPlaylists = { query -> search.searchPlaylists(query, null).items.map { it.data } },
         now = now,
+    )
+    private val personal = PersonalRows(
+        source = plays,
+        history = history,
+        store = store,
+        likedIds = { mirror.allSavedTrackIds() },
+        radioFor = { discovery.radioFor(it) },
+        now = now,
+        offsetMinutes = offsetMinutes,
     )
 
     override suspend fun featured(): List<MetadataBrowseItem> = orNull {
@@ -120,6 +136,11 @@ internal class RealMetadataBrowseAPI(
     ): PaginationResult<MetadataBrowseItem> = emptyPagination()
 
     private suspend fun section(spec: SectionSpec): MetadataBrowseSection? {
+        val profile = store.resolvedKey("history.tracks")
+        if (profile != builtProfile) {
+            built.clear()
+            builtProfile = profile
+        }
         built[spec.key]?.let { (at, cached) ->
             val ttl = if (cached == null) FAILED_SECTION_TTL_MS else SECTION_TTL_MS
             if (now() - at < ttl) return cached
@@ -134,7 +155,8 @@ internal class RealMetadataBrowseAPI(
     private suspend fun hasPersonalData(): Boolean = orNull {
         history.all().isNotEmpty() || library.savedPlaylists().isNotEmpty() || library.storedPlaylists().isNotEmpty() ||
             mirror.allSavedTrackIds().isNotEmpty() || mirror.allSavedArtistIds().isNotEmpty() ||
-            mirror.allSavedAlbumIds().isNotEmpty() || mirror.cachedState()?.playlists.orEmpty().isNotEmpty()
+            mirror.allSavedAlbumIds().isNotEmpty() || mirror.cachedState()?.playlists.orEmpty().isNotEmpty() ||
+            personal.hasPlays()
     } ?: false
 
     private suspend fun forYouSpecs(): List<SectionSpec> {
@@ -149,28 +171,38 @@ internal class RealMetadataBrowseAPI(
 
         val specs = mutableListOf(
             SectionSpec("recent") { recentSection(recent) },
+            SectionSpec("on-repeat") { personal.onRepeatRow() },
             SectionSpec("your-artists") { yourArtistsSection(topArtistIds) },
+            SectionSpec("daily-mix:1") { personal.dailyMixRow(0) },
         )
         for (i in 0 until maxOf(seeds.size, browsable.size)) {
             seeds.getOrNull(i)?.let { seed -> specs += SectionSpec("radio:${seed.id}") { radioSection(seed) } }
+            if (i == 0) specs += SectionSpec("time-mix") { personal.timeMixRow() }
             browsable.getOrNull(i)?.let { id -> specs += SectionSpec("albums:$id") { moreFromSection(id) } }
             if (i == 0) {
                 specs += SectionSpec("fans") { fansSection(seeds, topArtistIds) }
+                specs += SectionSpec("daily-mix:2") { personal.dailyMixRow(1) }
                 specs += SectionSpec("new-songs") { newSongsSection(seeds, topArtistIds) }
             }
             browsable.getOrNull(i)?.let { id -> specs += SectionSpec("playlists:$id") { artistPlaylistsSection(id) } }
             if (i == 0) {
                 specs += SectionSpec("your-playlists") { yourPlaylistsSection() }
                 specs += SectionSpec("saved-albums") { savedAlbumsSection() }
+                specs += SectionSpec("daily-mix:3") { personal.dailyMixRow(2) }
                 specs += SectionSpec("albums-like") { albumsLikeSection(seeds, topArtistIds) }
                 specs += SectionSpec("playlists-like") { playlistsLikeSection(seeds, topArtistIds) }
             }
         }
+        specs += SectionSpec("forgotten") { personal.forgottenRow() }
         // Last, so its searches run only when the user scrolls this far.
         if (seeds.isNotEmpty()) specs += SectionSpec("playlists-search") { searchedPlaylistsSection(seeds, topArtistIds) }
         if (seeds.isEmpty() && browsable.isEmpty()) {
             specs += SectionSpec("your-playlists") { yourPlaylistsSection() }
             specs += SectionSpec("saved-albums") { savedAlbumsSection() }
+            // Plays synced from other devices can fill these rows before this device has a seed.
+            specs += SectionSpec("time-mix") { personal.timeMixRow() }
+            specs += SectionSpec("daily-mix:2") { personal.dailyMixRow(1) }
+            specs += SectionSpec("daily-mix:3") { personal.dailyMixRow(2) }
         }
         return specs
     }

@@ -97,10 +97,11 @@ latches.
 | `piped.library` | Saved track, album, artist and playlist ids of the profile |
 | `piped.playlists` | Locally created playlists with their track ids |
 | `history.tracks` | Play history that Home and endless playback read, the last 200 tracks |
+| `history.plays` | Every counted play on this device as `[videoId, at]`, newest first, the last 5,000. Home's personal rows read it when storage is off |
 | `radio.stations` | The last 3 endless playback stations, each with its returned songs, pool and skips |
 
-`piped.library`, `piped.playlists`, `history.tracks`, `history.pending`, `history.seen` and every storage sync key
-below except `storage.device` and `storage.support` are per profile, see [Profiles](#profiles).
+`piped.library`, `piped.playlists`, `history.tracks`, `history.pending`, `history.seen`, `history.plays` and every
+storage sync key below except `storage.device` and `storage.support` are per profile, see [Profiles](#profiles).
 
 ### Caches
 
@@ -370,6 +371,24 @@ entries, each entry once per start.
 Detection runs inside the account refresh when the account has no verdict or the last check is older than 24 hours
 (`SUPPORT_RECHECK_MS`). It reads `/config` for `"s3Enabled"`, then stats `spdevices` with the session. A failed read
 keeps the previous verdict. The verdict in `storage.support` counts only for its instance and username.
+
+## Personal Home rows
+
+For you shows On repeat, Forgotten favorites, a time-of-day mix and Daily mix 1 to 3. With storage active they read
+the play events of every device of the account from the store, and the folded counts for totals. Otherwise they
+read `history.plays`. `PlaySource` picks the source at each build.
+
+- On repeat: plays of the last 30 days by count, at least 2 each.
+- Forgotten favorites: tracks with 5 plays or more and none in the last 60 days.
+- Time-of-day mix: plays of the last 30 days in the current local window of 4 hours (late night 0-4, early
+  morning 4-8, morning 8-12, afternoon 12-16, evening 16-20, night 20-24). Synced plays use this device's offset.
+- Daily mixes: the plays of the last 30 days split into sessions at gaps over 30 minutes. The most played artist
+  left starts a group and takes up to 4 more artists that share at least 2 sessions with it. A group needs 3
+  played songs. Its played and liked songs take turns with a radio of its top track, up to 25, without songs
+  played in the last 6 hours. Without the radio it shows with 10 known songs.
+
+A row needs 5 tracks and shows up to 20, a daily mix up to 25. Rows built together share one request for the
+same radio. Ids without stored track details drop out, and nothing is fetched for them.
 
 ## History log
 

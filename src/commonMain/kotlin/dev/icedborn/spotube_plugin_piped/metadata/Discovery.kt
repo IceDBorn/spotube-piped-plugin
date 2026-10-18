@@ -29,14 +29,25 @@ internal class Discovery(
     private val now: () -> Long,
 ) {
     private val radios = HashMap<String, Pair<Long, List<MetadataTrack>>>()
+    private val pendingRadios = HashMap<String, CompletableDeferred<List<MetadataTrack>>>()
     private val artistSets = HashMap<String, Pair<Long, CompletableDeferred<List<MetadataArtist.Basic>>>>()
 
     // A failed radio reads as empty and is not kept, so the next section asks again.
     suspend fun radioFor(seed: MetadataTrack): List<MetadataTrack> {
         radios.entries.removeAll { now() - it.value.first >= RADIO_REUSE_MS }
         radios[seed.id]?.let { return it.second }
-        val tracks = orNull { radio(seed.id) }.orEmpty()
-        if (tracks.isNotEmpty()) radios[seed.id] = now() to tracks
+        // Sections of one page build together, so a second one waits for the request already running.
+        pendingRadios[seed.id]?.let { return it.await() }
+        val pending = CompletableDeferred<List<MetadataTrack>>()
+        pendingRadios[seed.id] = pending
+        var tracks = emptyList<MetadataTrack>()
+        try {
+            tracks = orNull { radio(seed.id) }.orEmpty()
+            if (tracks.isNotEmpty()) radios[seed.id] = now() to tracks
+        } finally {
+            pendingRadios.remove(seed.id)
+            pending.complete(tracks)
+        }
         return tracks
     }
 

@@ -13,7 +13,14 @@ internal const val LEGACY_PROFILE_KEY = "profiles.legacy"
 
 private val profileLog = Logger("PipedProfiles")
 
-private val PROFILE_KEYS = setOf("piped.library", "piped.playlists", "history.tracks", "history.pending", "history.seen")
+private val PROFILE_KEYS = setOf(
+    "piped.library",
+    "piped.playlists",
+    "history.tracks",
+    "history.pending",
+    "history.seen",
+    "history.plays",
+)
 
 /** Keys of one account's storage sync. They live in that account's profile. */
 internal val SYNC_STATE_PREFIXES = listOf(

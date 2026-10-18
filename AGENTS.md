@@ -36,7 +36,7 @@ Main code is in `src/commonMain/kotlin/dev/icedborn/spotube_plugin_piped/`:
 | --- | --- |
 | `core` | `RealCoreAPI` (login, settings form, logout), account session, profiles, instance source, update checker |
 | `client` | `PipedClient`, `AccountHttp`, the Piped models and the converters to Spotube types |
-| `store` | `EntityStore`, local library, play history and its sync, `RowCache`, account sync, `StorageMigration` |
+| `store` | `EntityStore`, local library, play history, the play log and its sync, `RowCache`, account sync, `StorageMigration` |
 | `sync` | `StorageSync` facade, detection and switch, `SyncEngine`, the library, settings and playlist kinds |
 | `metadata` | The metadata APIs, `AlbumLookup`, charts, related artists, endless playback |
 | `audio` | `RealPipedAudioAPI` and stream selection |

@@ -189,6 +189,14 @@ internal class SyncEngine(
         return docs
     }
 
+    /** The own and cached remote documents of [kind], read from the store without a request. */
+    suspend fun cachedDocs(kind: SyncKind): List<SyncDoc> {
+        val self = owner.device()
+        val registry = store.getDecoded(REGISTRY_KEY, DeviceRegistry.serializer())
+        val others = registry?.devices.orEmpty().map { it.id }.filter { it != self }
+        return docsOf(kind, self, others)
+    }
+
     private suspend fun readRegistry(account: PipedAccount): DeviceRegistry? {
         val cached = store.getDecoded(REGISTRY_KEY, DeviceRegistry.serializer())
         val stat = http.stat(account, REGISTRY_FILE)

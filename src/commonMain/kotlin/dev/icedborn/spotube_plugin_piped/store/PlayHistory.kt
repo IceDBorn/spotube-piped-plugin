@@ -53,7 +53,7 @@ internal fun combinePlays(local: List<PlayedTrack>, merged: List<PlayedTrack>): 
 
 /** The host sends plugins no play history, so the plugin logs every track the audio API resolves.
  * A track the host preloads counts too, even if it is skipped. */
-internal class PlayHistory(private val store: EntityStore) {
+internal class PlayHistory(private val store: EntityStore, private val log: PlayLog = PlayLog(store)) {
 
     suspend fun all(): List<PlayedTrack> = store.getDecoded(HISTORY_KEY, ListSerializer(PlayedTrack.serializer())).orEmpty()
 
@@ -72,7 +72,10 @@ internal class PlayHistory(private val store: EntityStore) {
                 val updated = PlayedTrack(track, (previous?.plays ?: 0) + 1, now)
                 val rest = entries.filterNot { it.track.id == track.id }
                 val encoded = json.encodeToJsonElement((listOf(updated) + rest).take(HISTORY_LIMIT))
-                store.put(HISTORY_KEY, encoded)
+                val stored = store.put(HISTORY_KEY, encoded)
+                // The log only feeds Home rows, so a failed append still counts the play.
+                if (stored) log.append(track.id, now)
+                stored
             }
         }
     }

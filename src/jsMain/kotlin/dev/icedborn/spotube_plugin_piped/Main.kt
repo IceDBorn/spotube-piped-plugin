@@ -27,9 +27,12 @@ import dev.icedborn.spotube_plugin_piped.settings.RegionSetting
 import dev.icedborn.spotube_plugin_piped.settings.UpdateChannelSetting
 import dev.icedborn.spotube_plugin_piped.store.EntityStore
 import dev.icedborn.spotube_plugin_piped.store.LocalLibrary
+import dev.icedborn.spotube_plugin_piped.store.LocalPlayTimes
 import dev.icedborn.spotube_plugin_piped.store.PipedSavedLibrary
 import dev.icedborn.spotube_plugin_piped.store.PlayHistory
+import dev.icedborn.spotube_plugin_piped.store.PlayLog
 import dev.icedborn.spotube_plugin_piped.store.StorageMigration
+import dev.icedborn.spotube_plugin_piped.sync.PlaySource
 import dev.icedborn.spotube_plugin_piped.sync.StorageSync
 import dev.krtirtho.plugin_interfaces.core.runPluginInitialized
 import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI
@@ -134,7 +137,7 @@ private suspend fun start() {
         RealPipedAudioAPI(AudioPipedClient(playback), scope = initScope) { scrobbles.onAudioRequested(it) },
     )
     zipline.bind<ScrobbleAPI>(ScrobbleAPI_SERVICE_NAME, RealScrobbleAPI(scrobbles))
-    bindMetadata(client, store, library, mirror, albumLookup, history, region, libraryPlaylist, trackApi)
+    bindMetadata(client, store, library, mirror, albumLookup, history, region, libraryPlaylist, trackApi, storageSync)
     if (account != null) initScope.launch { mirror.refreshCache() }
 }
 
@@ -148,6 +151,7 @@ private fun bindMetadata(
     region: RegionSetting,
     libraryPlaylist: LibraryPlaylistSetting,
     trackApi: RealMetadataTrackAPI,
+    storageSync: StorageSync,
 ) {
     val albumApi = RealMetadataAlbumAPI(client, store, library, mirror, albumLookup, initScope)
     val artistApi = RealMetadataArtistAPI(client, store, library, mirror) { seeds -> trackApi.radio(seeds, 50) }
@@ -164,6 +168,8 @@ private fun bindMetadata(
         albums = albumApi,
         playlists = playlistApi,
         search = searchApi,
+        plays = PlaySource(LocalPlayTimes(PlayLog(store)), storageSync),
+        store = store,
     )
     zipline.bind<MetadataSearchAPI>(MetadataSearchAPI_SERVICE_NAME, searchApi)
     zipline.bind<MetadataTrackAPI>(MetadataTrackAPI_SERVICE_NAME, trackApi)

@@ -133,6 +133,12 @@ internal class StorageSync(
         (store.get(HISTORY_IMPORTED_KEY) as? JsonPrimitive)?.contentOrNull == accountStamp(account)
     }
 
+    /** The synced plays of every device of the active account. Empty when storage is not active. */
+    suspend fun historyDocs(): List<SyncDoc> {
+        val account = activeAccount() ?: return emptyList()
+        return store.forAccount(account) { engine.cachedDocs(historyKind) }
+    }
+
     private suspend fun importOnce(account: PipedAccount, previous: AccountCacheState?) {
         val stamp = accountStamp(account)
         if ((store.get(IMPORTED_KEY) as? JsonPrimitive)?.contentOrNull == stamp) return
