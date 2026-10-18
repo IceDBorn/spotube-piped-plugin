@@ -1,7 +1,5 @@
 package dev.icedborn.spotube_plugin_piped.sync
 
-import dev.icedborn.spotube_plugin_piped.core.PipedAccount
-import dev.icedborn.spotube_plugin_piped.fakes.FAKE_INSTANCE
 import dev.icedborn.spotube_plugin_piped.fakes.FakeStorage
 import dev.icedborn.spotube_plugin_piped.store.EntityStore
 import kotlinx.coroutines.test.runTest
@@ -11,10 +9,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/** The entries a device authored, the account they belong to, and the marks of kinds waiting for a push. */
+/** The entries a device authored and the marks of kinds waiting for a push. */
 class OwnEntriesTest {
-    private val ice = PipedAccount(FAKE_INSTANCE, "ice", "token-ice")
-
     @Test
     fun `the device id is created once and kept`() = runTest {
         val store = EntityStore(FakeStorage())
@@ -37,22 +33,6 @@ class OwnEntriesTest {
         own.record(listOf(LwwEntry("t:x", 6)))
         own.recordIfAbsent(listOf(LwwEntry("t:x", 0, JsonPrimitive(1)), LwwEntry("t:y", 0, JsonPrimitive(1))))
         assertEquals(listOf(LwwEntry("t:x", 6), LwwEntry("t:y", 0, JsonPrimitive(1))), own.entries())
-    }
-
-    @Test
-    fun `another account clears the own entries and marks but not the device id`() = runTest {
-        val store = EntityStore(FakeStorage())
-        val owner = SyncOwner(store)
-        val device = owner.device()
-        owner.ensure(ice)
-        LwwStore(store, "lib").record(listOf(LwwEntry("t:x", 5, JsonPrimitive(1))))
-        DirtyMarks(store).mark("lib")
-        owner.ensure(ice)
-        assertEquals(1, LwwStore(store, "lib").entries().size)
-        owner.ensure(ice.copy(username = "bob"))
-        assertTrue(LwwStore(store, "lib").entries().isEmpty())
-        assertTrue(DirtyMarks(store).all().isEmpty())
-        assertEquals(device, owner.device())
     }
 
     @Test

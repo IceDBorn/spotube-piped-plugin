@@ -48,7 +48,10 @@ nightly. To go back sooner, reinstall a stable build from the
 The **Login** tab is optional. Sign in to, or register on, the instance. Saved tracks, albums and artists then sync
 to the "Spotube - Favorites", "Spotube - Albums" and "Spotube - Artists" playlists on that account, and a copy stays
 on the device for offline use. With Piped as the scrobble plugin, the play history syncs through a
-"Spotube - History" playlist, see [History sync](#history-sync). Without an account, everything stays local.
+"Spotube - History" playlist, see [History sync](#history-sync). Without an account, everything stays local. Each
+account on the device, and the signed-out state, has its own library, playlists and play history. Signing out shows
+the signed-out library, and the account's comes back when it signs in again. When this version lands while you are
+signed in, the account keeps what the device had and the signed-out library starts with a copy.
 
 While an account is signed in, the button on Piped reads Logout, and pressing it opens the same form on the
 Settings tab. The Login tab then shows who is signed in, with **Log out** and **Done**. Done closes the form and
@@ -146,8 +149,8 @@ Home shows the merged plays after a restart of Spotube Nightly, which caches Hom
 Library -> Playlists does not list the playlist. Like every Piped playlist, anyone who has its id can read it, and
 a plugin version from before this feature lists it as a normal playlist. Removing rows on the web, or deleting the
 playlist, does not clear the history on any device. The next scrobbled play creates a deleted playlist again, and
-the playlist then holds only the plays made from then on. The history on a device belongs to the device, not to
-an account, so plays merged from two accounts land in the same history.
+the playlist then holds only the plays made from then on. Each account has its own history on the device, so plays
+from two accounts never mix.
 
 With [storage sync](#storage-requests) active, plays sync through storage files instead of the playlist. Each
 scrobbled play is stored with its time, so other devices show real counts and play times. The first sync on a
@@ -215,8 +218,8 @@ device has not shared before one track details file, 2 more. Plays within the 30
 16 play files are full, every 1,000th play folds the oldest one into the counts file `agg`, and that push sends
 `agg` too, 2 more requests. The first sync with play history reads the history playlist once more, 1 request per
 page, and the device's own manifest, 1 or 2 requests. The push after it sends `agg` and up to 16 track details
-files, 2 requests each. After an account switch and back, the device reads the play files it published before, 1
-request each, instead of sending a new `agg`.
+files, 2 requests each. After a reinstall, the device reads the play files it published before, 1 request each,
+instead of sending a new `agg`.
 
 [docs/design.md](docs/design.md) lists the storage keys, the index format and the row cache rules.
 

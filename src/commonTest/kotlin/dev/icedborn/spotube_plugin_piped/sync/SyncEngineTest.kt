@@ -2,6 +2,7 @@ package dev.icedborn.spotube_plugin_piped.sync
 
 import dev.icedborn.spotube_plugin_piped.client.StorageHttp
 import dev.icedborn.spotube_plugin_piped.core.PipedAccount
+import dev.icedborn.spotube_plugin_piped.core.dropSyncState
 import dev.icedborn.spotube_plugin_piped.fakes.FAKE_INSTANCE
 import dev.icedborn.spotube_plugin_piped.fakes.FakePiped
 import dev.icedborn.spotube_plugin_piped.fakes.FakeStorage
@@ -35,7 +36,6 @@ class SyncEngineTest {
 
         suspend fun setUp(account: PipedAccount, id: String) {
             store.put("storage.device", JsonPrimitive(id))
-            owner.ensure(account)
         }
 
         suspend fun note(key: String, at: Long) {
@@ -70,7 +70,6 @@ class SyncEngineTest {
         val store = EntityStore(FakeStorage())
         store.put("storage.device", JsonPrimitive(id))
         val owner = SyncOwner(store)
-        owner.ensure(ice)
         return TwoFileDevice(piped, store, owner)
     }
 
@@ -239,7 +238,7 @@ class SyncEngineTest {
     }
 
     @Test
-    fun `an account switch never reuses a version another device cached`() = runTest {
+    fun `a wiped sync state never reuses a version another device cached`() = runTest {
         val piped = FakePiped()
         val a = device(piped, "aaaa0001")
         val b = device(piped, "bbbb0002")
@@ -247,8 +246,7 @@ class SyncEngineTest {
         a.engine.flush(ice)
         b.engine.ensureRegistered(ice)
         b.engine.pull(ice)
-        a.owner.ensure(ice.copy(username = "bob", token = "token-bob"))
-        a.owner.ensure(ice)
+        a.store.dropSyncState()
         a.note("k2", 2)
         a.engine.flush(ice)
         assertEquals(2, decodeManifest(piped.files.getValue("ice/spaaaa0001m").first)!!.versions["set"])

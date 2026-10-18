@@ -72,8 +72,7 @@ internal class StorageSync(
     }
 
     /** One account refresh in storage mode: import once, pull, then push. */
-    suspend fun sync(account: PipedAccount, previous: AccountCacheState?) {
-        owner.ensure(account)
+    suspend fun sync(account: PipedAccount, previous: AccountCacheState?) = store.forAccount(account) {
         importOnce(account, previous)
         importHistoryOnce(account)
         engine.pull(account)
@@ -83,50 +82,56 @@ internal class StorageSync(
     /** Records saves or unsaves when storage is active. False means the caller takes the playlist path. */
     suspend fun librarySaved(kind: SavedKind, ids: List<String>, saved: Boolean): Boolean {
         val account = activeAccount() ?: return false
-        owner.ensure(account)
-        libraryKind.record(kind, ids, saved, now())
-        if (saved && kind == SavedKind.TRACK) dictionary.note(ids)
-        marks.mark(libraryKind.suffix)
+        store.forAccount(account) {
+            libraryKind.record(kind, ids, saved, now())
+            if (saved && kind == SavedKind.TRACK) dictionary.note(ids)
+            marks.mark(libraryKind.suffix)
+        }
         return true
     }
 
     suspend fun savedPlaylistsChanged(ids: List<String>, saved: Boolean) {
         val account = activeAccount() ?: return
-        owner.ensure(account)
-        libraryKind.recordPlaylists(ids, saved, now())
-        marks.mark(libraryKind.suffix)
+        store.forAccount(account) {
+            libraryKind.recordPlaylists(ids, saved, now())
+            marks.mark(libraryKind.suffix)
+        }
     }
 
     suspend fun settingChanged(key: String) {
         if (key !in SYNCED_SETTING_KEYS) return
         val account = activeAccount() ?: return
-        owner.ensure(account)
-        settingsKind.record(key, now())
-        marks.mark(settingsKind.suffix)
+        store.forAccount(account) {
+            settingsKind.record(key, now())
+            marks.mark(settingsKind.suffix)
+        }
     }
 
     suspend fun playlistTouched(localId: String): Boolean {
         val account = activeAccount() ?: return false
-        owner.ensure(account)
-        playlistsKind.touch(localId, now())
-        marks.mark(playlistsKind.suffix)
+        store.forAccount(account) {
+            playlistsKind.touch(localId, now())
+            marks.mark(playlistsKind.suffix)
+        }
         return true
     }
 
     /** Records a scrobbled play when storage is active. False means the caller takes the history log path. */
     suspend fun played(track: MetadataTrack): Boolean {
         val account = activeAccount() ?: return false
-        owner.ensure(account)
         // Before the import, the play is in the local counts the import turns into the baseline.
         if (!YOUTUBE_VIDEO_ID.matches(track.id) || !historyImported(account)) return true
-        store.rememberTrack(track)
-        dictionary.note(listOf(track.id))
-        historyKind.record(track.id, now())
+        store.forAccount(account) {
+            store.rememberTrack(track)
+            dictionary.note(listOf(track.id))
+            historyKind.record(track.id, now())
+        }
         return true
     }
 
-    suspend fun historyImported(account: PipedAccount): Boolean =
+    suspend fun historyImported(account: PipedAccount): Boolean = store.forAccount(account) {
         (store.get(HISTORY_IMPORTED_KEY) as? JsonPrimitive)?.contentOrNull == accountStamp(account)
+    }
 
     private suspend fun importOnce(account: PipedAccount, previous: AccountCacheState?) {
         val stamp = accountStamp(account)
@@ -166,7 +171,7 @@ internal class StorageSync(
         flushJob = scope.launch {
             delay(FLUSH_DELAY_MS)
             val account = activeAccount() ?: return@launch
-            orNull("storage flush") { engine.flush(account) }
+            store.forAccount(account) { orNull("storage flush") { engine.flush(account) } }
         }
     }
 }

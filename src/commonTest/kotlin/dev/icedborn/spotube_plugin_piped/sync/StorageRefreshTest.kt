@@ -89,7 +89,7 @@ class StorageRefreshTest {
     @Test
     fun `switching to another account and back counts the plays once`() = runTest {
         val piped = FakePiped(pageSize = 100)
-        val a = AccountHarness(backgroundScope, piped, storageSync = true)
+        val a = AccountHarness(backgroundScope, piped, storageSync = true, profiles = true)
         val b = AccountHarness(backgroundScope, piped, storageSync = true)
         listOf(a to "aaaa0001", b to "bbbb0002").forEach { (h, id) ->
             h.signIn()

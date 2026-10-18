@@ -2,6 +2,7 @@ package dev.icedborn.spotube_plugin_piped.sync
 
 import dev.icedborn.spotube_plugin_piped.client.StorageHttp
 import dev.icedborn.spotube_plugin_piped.core.PipedAccount
+import dev.icedborn.spotube_plugin_piped.core.dropSyncState
 import dev.icedborn.spotube_plugin_piped.fakes.FAKE_INSTANCE
 import dev.icedborn.spotube_plugin_piped.fakes.FakePiped
 import dev.icedborn.spotube_plugin_piped.fakes.FakeStorage
@@ -37,7 +38,6 @@ class SyncedHistoryTest {
     private suspend fun device(piped: FakePiped, id: String, segmentEvents: Int = SEGMENT_EVENTS, segmentCount: Int = SEGMENT_COUNT) =
         Device(piped, segmentEvents, segmentCount).also {
             it.store.put("storage.device", JsonPrimitive(id))
-            it.owner.ensure(ice)
         }
 
     @Test
@@ -121,8 +121,7 @@ class SyncedHistoryTest {
         val a = device(piped, "aaaa0001", segmentEvents = 2, segmentCount = 3)
         (1..7).forEach { a.kind.record(vid(1), it * 100_000L) }
         a.engine.flush(ice)
-        a.owner.ensure(PipedAccount(FAKE_INSTANCE, "bob", "token-bob"))
-        a.owner.ensure(ice)
+        a.store.dropSyncState()
         val published = assertNotNull(a.engine.publishedOwn(ice, a.kind.files.map { it.suffix }))
         assertTrue(a.kind.restore(published))
 

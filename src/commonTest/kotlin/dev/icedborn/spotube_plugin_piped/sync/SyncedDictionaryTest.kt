@@ -29,7 +29,6 @@ class SyncedDictionaryTest {
 
     private suspend fun device(piped: FakePiped, id: String, storage: FakeStorage = FakeStorage()) = Device(piped, storage).also {
         it.store.put("storage.device", JsonPrimitive(id))
-        it.owner.ensure(ice)
     }
 
     @Test

@@ -61,7 +61,9 @@ internal class HistorySync(
     suspend fun onPlay(track: MetadataTrack) {
         if (!YOUTUBE_VIDEO_ID.matches(track.id)) return
         val account = sessionProvider() ?: return
-        val queued = changeQueue(account) { it.copy(plays = (it.plays + PendingPlay(track.id)).takeLast(HISTORY_PENDING_LIMIT)) }
+        val queued = store.forAccount(account) {
+            changeQueue(account) { it.copy(plays = (it.plays + PendingPlay(track.id)).takeLast(HISTORY_PENDING_LIMIT)) }
+        }
         if (queued) scope.launch { orNull("history upload") { upload() } }
     }
 
@@ -73,7 +75,7 @@ internal class HistorySync(
             while (requested) {
                 requested = false
                 val account = sessionProvider() ?: break
-                flush(account)
+                store.forAccount(account) { flush(account) }
             }
         } finally {
             syncLock.unlock()

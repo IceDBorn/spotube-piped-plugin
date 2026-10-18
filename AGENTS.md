@@ -34,7 +34,7 @@ Main code is in `src/commonMain/kotlin/dev/icedborn/spotube_plugin_piped/`:
 
 | Package | Contents |
 | --- | --- |
-| `core` | `RealCoreAPI` (login, settings form, logout), account session, instance source, update checker |
+| `core` | `RealCoreAPI` (login, settings form, logout), account session, profiles, instance source, update checker |
 | `client` | `PipedClient`, `AccountHttp`, the Piped models and the converters to Spotube types |
 | `store` | `EntityStore`, local library, play history and its sync, `RowCache`, account sync, `StorageMigration` |
 | `sync` | `StorageSync` facade, detection and switch, `SyncEngine`, the library, settings and playlist kinds |
@@ -50,8 +50,9 @@ scrobbled plays to the history log and merges the plays of other devices, with i
 With storage active, `AccountCache` skips the mirrors and `StorageSync` carries the saved sets, settings, local
 playlists and, after its import, the plays.
 
-`src/jsMain/.../Main.kt` takes the host services from Zipline, runs `StorageMigration` before any role is bound,
-binds the roles, then starts the account refresh when a session is stored.
+`src/jsMain/.../Main.kt` takes the host services from Zipline, installs `Profiles` on the store, runs
+`StorageMigration` before any role is bound, binds the roles, then starts the account refresh when a session is
+stored.
 `core/Time.kt` has one implementation per platform.
 
 Tests mirror the package layout under `src/commonTest/`. The fakes in `fakes/`:

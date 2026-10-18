@@ -63,34 +63,41 @@ internal class PlayHistory(private val store: EntityStore) {
     /** False when the play was not counted: it fell into the replay window of the last one, or the write failed. */
     suspend fun record(track: MetadataTrack): Boolean {
         if (track.id.isBlank()) return false
-        return writeLock.withLock {
-            val now = epochMillis()
-            val entries = all()
-            val previous = entries.firstOrNull { it.track.id == track.id }
-            if (previous != null && now - previous.lastPlayedAt < REPLAY_WINDOW_MS) return false
-            val updated = PlayedTrack(track, (previous?.plays ?: 0) + 1, now)
-            val rest = entries.filterNot { it.track.id == track.id }
-            store.put(HISTORY_KEY, json.encodeToJsonElement((listOf(updated) + rest).take(HISTORY_LIMIT)))
+        return store.pinned {
+            writeLock.withLock {
+                val now = epochMillis()
+                val entries = all()
+                val previous = entries.firstOrNull { it.track.id == track.id }
+                if (previous != null && now - previous.lastPlayedAt < REPLAY_WINDOW_MS) return@withLock false
+                val updated = PlayedTrack(track, (previous?.plays ?: 0) + 1, now)
+                val rest = entries.filterNot { it.track.id == track.id }
+                val encoded = json.encodeToJsonElement((listOf(updated) + rest).take(HISTORY_LIMIT))
+                store.put(HISTORY_KEY, encoded)
+            }
         }
     }
 
     /** Stores [mergeRemotePlays] of [remote]. False when the write failed. */
     suspend fun mergeRemote(remote: List<MetadataTrack>, firstContact: Boolean): Boolean {
         if (remote.isEmpty()) return true
-        return writeLock.withLock {
-            // Read into a val first: QuickJS cannot compile a suspend call nested in a call's arguments inside withLock.
-            val local = all()
-            store.put(HISTORY_KEY, json.encodeToJsonElement(mergeRemotePlays(local, remote, firstContact)))
+        return store.pinned {
+            writeLock.withLock {
+                // Read into a val first: QuickJS cannot compile a suspend call nested in a call's arguments inside withLock.
+                val local = all()
+                store.put(HISTORY_KEY, json.encodeToJsonElement(mergeRemotePlays(local, remote, firstContact)))
+            }
         }
     }
 
     /** Stores [combinePlays] of [merged]. False when the write failed. */
-    suspend fun mergeCounts(merged: List<PlayedTrack>): Boolean = writeLock.withLock {
-        // Read into a val first: QuickJS cannot compile a suspend call nested in a call's arguments inside withLock.
-        val local = all()
-        val combined = combinePlays(local, merged)
-        if (combined == local) return@withLock true
-        store.put(HISTORY_KEY, json.encodeToJsonElement(combined))
+    suspend fun mergeCounts(merged: List<PlayedTrack>): Boolean = store.pinned {
+        writeLock.withLock {
+            // Read into a val first: QuickJS cannot compile a suspend call nested in a call's arguments inside withLock.
+            val local = all()
+            val combined = combinePlays(local, merged)
+            if (combined == local) return@withLock true
+            store.put(HISTORY_KEY, json.encodeToJsonElement(combined))
+        }
     }
 
     /** Most recent first, one entry per track. */

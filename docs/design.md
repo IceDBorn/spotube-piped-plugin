@@ -52,7 +52,7 @@ extend never interleave.
 The host gives each plugin one key-value store. `EntityStore` (`store/Store.kt`) keeps an in-memory copy of up to
 8,000,000 JSON characters and evicts the least recently used entries from memory first.
 
-`schema.version` holds the storage schema, currently 3. `StorageMigration` runs once at start, before any service
+`schema.version` holds the storage schema, currently 4. `StorageMigration` runs once at start, before any service
 reads storage. Each step moves the version to its own number once it and its writes succeed. A failed step stops
 the run and runs again at the next start, without repeating the steps before it:
 
@@ -62,6 +62,8 @@ the run and runs again at the next start, without repeating the steps before it:
   refill from page 1.
 - Version 3 deletes the `album.none:` keys, which kept a no-album verdict per artist and title, and stamps the
   plain `none` values in `track-album:` keys with the current time, so they expire like new verdicts.
+- Version 4 gives the device-wide library, local playlists, history and storage sync state to one profile, see
+  [Profiles](#profiles).
 
 Bare `saved.playlist:` and `mirror.playlist:` bindings from before account stamps are adopted at start, at each
 login and at each account refresh, not by a version step. A binding whose uuid is in the account's playlist
@@ -71,9 +73,10 @@ listing gets the account's stamp. One that is missing stays, since another accou
 the listing unreachable, the bindings wait. A new binding for the key or a playlist delete removes its miss record.
 
 Every start then deletes the `mirror.playlist:`, `binding.miss:mirror.playlist:`, `mirror.pending:` and old
-`mirror.playlistName:` keys of local playlists that no longer exist. It skips this when `piped.playlists` does not
-decode, so a corrupt list cannot take every binding with it. Last, it evicts the least recently used cache entries
-beyond the caps below and deletes expired `unresolvable:` latches.
+`mirror.playlistName:` keys of local playlists that no longer exist. The playlists of every profile keep their
+bindings. It skips this when a playlist list does not decode, so a corrupt list cannot take every binding with it.
+Last, it evicts the least recently used cache entries beyond the caps below and deletes expired `unresolvable:`
+latches.
 
 ### Settings and account
 
@@ -91,10 +94,13 @@ beyond the caps below and deletes expired `unresolvable:` latches.
 
 | Key | Value |
 | --- | --- |
-| `piped.library` | Saved track, album, artist and playlist ids on this device |
+| `piped.library` | Saved track, album, artist and playlist ids of the profile |
 | `piped.playlists` | Locally created playlists with their track ids |
 | `history.tracks` | Play history that Home and endless playback read, the last 200 tracks |
 | `radio.stations` | The last 3 endless playback stations, each with its returned songs, pool and skips |
+
+`piped.library`, `piped.playlists`, `history.tracks`, `history.pending`, `history.seen` and every storage sync key
+below except `storage.device` and `storage.support` are per profile, see [Profiles](#profiles).
 
 ### Caches
 
@@ -142,7 +148,7 @@ so switching accounts never writes into the previous account's playlists.
 | `piped.storage.sync` | `OFF`; absent means on |
 | `storage.support` | `StorageVerdict` for one account |
 | `storage.device` | This device's id, 8 letters and digits |
-| `storage.owner` | Account stamp the keys below belong to |
+| `profiles.legacy` | Account stamp, or `out`, of the profile that reads the bare keys |
 | `storage.own:<suffix>` | Entries authored here, per suffix (`lib`, `set`, `pl`, `h0`-`h15`, `agg`, `t0`-`t15`) |
 | `storage.dirty` | Kinds waiting for a push |
 | `storage.versions` | This device's manifest versions |
@@ -156,6 +162,29 @@ so switching accounts never writes into the previous account's playlists.
 | `storage.hist.cursor` | Generation of the open play segment |
 | `storage.dict.pending` | Track ids waiting for the dictionary |
 | `storage.imported.history` | Account stamp of the finished history import |
+
+## Profiles
+
+Each account on the device and the signed-out state have a profile. An account's id is the 64-bit FNV-1a hash
+of its `instance|username` stamp in hex, and the signed-out profile's id is `out`. The profile named in
+`profiles.legacy` reads the bare keys, and every other profile reads `p<id>.<key>`. A missing or unreadable
+`profiles.legacy` gives no profile the bare keys, which then stay in storage unread.
+
+`EntityStore` resolves the per-profile keys (`isProfileKey`). A coroutine pinned with `forAccount` or `inProfile`
+uses that profile, and any other call uses the profile of the session at that moment. The account refresh, the
+storage sync and the history log uploads run pinned to their account, so work that ends after an account switch
+writes only into its own account. The writes of `LocalLibrary` and `PlayHistory` pin the active profile, so a
+read and its write never land in two profiles.
+
+A switch changes only which profile the session resolves to. Nothing is cleared, so a returning account finds
+its own files, marks and tombstones as it left them. Saves and plays made signed out stay in `out` and never
+reach an account.
+
+Schema 4 assigns the bare keys. Signed in, the account takes them, and `out` gets a copy of `piped.library`,
+`piped.playlists` and `history.tracks`. When the old `storage.owner` named another account, the bare sync keys
+are dropped and the account imports again. Signed out, `out` takes them, and the bare sync keys,
+`history.pending` and `history.seen` are dropped. `storage.owner` is then removed.
+A rerun after a failed write keeps the owner the first run chose.
 
 ## Mirror index
 
@@ -320,10 +349,10 @@ play goes into the open segment and the next play retries the fold, which skips 
 The first sync per account writes the device's `history.tracks` counts into `agg` as `b:<videoId>` entries at
 time 0, after one last merge of the history log. Plays recorded before that import only count locally, since the
 import includes them. When the device's own manifest already lists `agg` or a segment, the device published plays
-for this account before an owner reset, and `history.tracks` holds them. The import then reads those files back
-into `storage.own:` and sets `storage.hist.cursor` to the newest generation of their events, at least one above
-`w`, instead of writing a new baseline that would count them twice. A failed read leaves the import to the next
-refresh.
+for this account before its sync state was dropped, for example by a reinstall or the schema 4 migration, and
+`history.tracks` holds them. The import then reads those files back into `storage.own:` and sets
+`storage.hist.cursor` to the newest generation of their events, at least one above `w`, instead of writing a new
+baseline that would count them twice. A failed read leaves the import to the next refresh.
 
 A pull counts, per track, every device's events above its `w` and folded counts plus the largest baseline of any
 device. Baselines overlap, because the history log already spread plays between devices. The 400 tracks with the
@@ -336,10 +365,7 @@ with the cached track and `al:<videoId>` with a found album id. Only changed sha
 its newest entries up to 120,000 bytes. A pull fills empty `track:` and `track-album:` keys from other devices'
 entries, each entry once per start.
 
-### Owner reset and detection
-
-When another account signs in, every key under `ACCOUNT_SYNC_PREFIXES` is cleared. `storage.device` and
-`storage.support` stay.
+### Detection
 
 Detection runs inside the account refresh when the account has no verdict or the last check is older than 24 hours
 (`SUPPORT_RECHECK_MS`). It reads `/config` for `"s3Enabled"`, then stats `spdevices` with the session. A failed read
@@ -429,10 +455,9 @@ Piped removes by stored position and refuses a position that holds no row. An ad
 leave position 0 without one, so the trim tries positions 1 and 2 after a refusal at position 0. With three empty
 positions at the head the trim finds no row, and the log grows past the cap.
 
-### Device history
+### Profile history
 
-`history.tracks` is one history per device, not per account. The plays merged from two accounts land in the same
-history.
+`history.tracks` belongs to the profile, so plays merged from two accounts never land in the same history.
 
 ## Endless playback
 

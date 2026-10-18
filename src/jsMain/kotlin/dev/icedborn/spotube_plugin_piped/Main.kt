@@ -9,6 +9,7 @@ import dev.icedborn.spotube_plugin_piped.client.AccountHttp
 import dev.icedborn.spotube_plugin_piped.client.PipedClient
 import dev.icedborn.spotube_plugin_piped.core.AccountSession
 import dev.icedborn.spotube_plugin_piped.core.InstanceSource
+import dev.icedborn.spotube_plugin_piped.core.Profiles
 import dev.icedborn.spotube_plugin_piped.core.RealCoreAPI
 import dev.icedborn.spotube_plugin_piped.metadata.AlbumLookup
 import dev.icedborn.spotube_plugin_piped.metadata.Charts
@@ -80,11 +81,13 @@ private suspend fun start() {
     val httpClient = zipline.take<HttpClientAPI>(HttpClientAPI_SERVICE_NAME)
     val storage = zipline.take<PersistedStorageAPI>(PersistedStorageAPI_SERVICE_NAME)
     val store = EntityStore(storage)
-    val library = LocalLibrary(store)
     val session = AccountSession(store)
+    val profiles = Profiles(store, session)
+    store.useProfiles(profiles)
+    val library = LocalLibrary(store)
     val account = session.load()
     val instanceSource = InstanceSource(store, account?.instance)
-    val migration = StorageMigration(AccountHttp(httpClient), store, library, session, instanceSource)
+    val migration = StorageMigration(AccountHttp(httpClient), store, library, session, instanceSource, profiles)
     migration.run()
     val client = PipedClient(httpClient) { instanceSource.requireApi() }
     val albumLookup = AlbumLookup(client, store)

@@ -4,6 +4,7 @@ import dev.icedborn.spotube_plugin_piped.client.PipedClient
 import dev.icedborn.spotube_plugin_piped.core.AccountSession
 import dev.icedborn.spotube_plugin_piped.core.InstanceSource
 import dev.icedborn.spotube_plugin_piped.core.PipedAccount
+import dev.icedborn.spotube_plugin_piped.core.Profiles
 import dev.icedborn.spotube_plugin_piped.fakes.FAKE_INSTANCE
 import dev.icedborn.spotube_plugin_piped.fakes.FakePiped
 import dev.icedborn.spotube_plugin_piped.fakes.FakeStorage
@@ -21,10 +22,16 @@ internal class AccountHarness(
     val storage: FakeStorage = FakeStorage(),
     storageSync: Boolean = false,
     var clock: Long = 1_000L,
+    profiles: Boolean = false,
 ) {
     val store = EntityStore(storage)
     val library = LocalLibrary(store)
     val session = AccountSession(store)
+
+    init {
+        if (profiles) store.useProfiles(Profiles(store, session))
+    }
+
     val instance = InstanceSource(store, FAKE_INSTANCE)
     val client = PipedClient(piped) { FAKE_INSTANCE }
     val lookup = AlbumLookup(client, store)

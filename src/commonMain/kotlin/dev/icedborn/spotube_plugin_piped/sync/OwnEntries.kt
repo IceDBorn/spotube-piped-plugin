@@ -1,8 +1,6 @@
 package dev.icedborn.spotube_plugin_piped.sync
 
 import dev.icedborn.spotube_plugin_piped.client.json
-import dev.icedborn.spotube_plugin_piped.core.PipedAccount
-import dev.icedborn.spotube_plugin_piped.core.accountStamp
 import dev.icedborn.spotube_plugin_piped.store.EntityStore
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -13,16 +11,8 @@ import kotlinx.serialization.json.contentOrNull
 import kotlin.random.Random
 
 private const val DEVICE_KEY = "storage.device"
-private const val OWNER_KEY = "storage.owner"
 private const val OWN_PREFIX = "storage.own:"
 private const val DIRTY_KEY = "storage.dirty"
-
-/** Keys that belong to one account's storage. A different signed-in account clears them. */
-internal val ACCOUNT_SYNC_PREFIXES = listOf(
-    OWN_PREFIX, DIRTY_KEY, "storage.remote:", "storage.etag:", "storage.registry", "storage.registered",
-    "storage.versions", "storage.manifest.dirty", "storage.imported", "storage.pl.touched",
-    "storage.hist.cursor", "storage.dict.pending",
-)
 
 internal class SyncOwner(private val store: EntityStore, private val random: Random = Random.Default) {
     private val lock = Mutex()
@@ -33,14 +23,6 @@ internal class SyncOwner(private val store: EntityStore, private val random: Ran
         val created = newDeviceId(random)
         store.put(DEVICE_KEY, JsonPrimitive(created))
         created
-    }
-
-    suspend fun ensure(account: PipedAccount) {
-        val stamp = accountStamp(account)
-        if ((store.get(OWNER_KEY) as? JsonPrimitive)?.contentOrNull == stamp) return
-        val stale = store.keys().filter { key -> ACCOUNT_SYNC_PREFIXES.any { key.startsWith(it) } }
-        stale.forEach { store.remove(it) }
-        store.put(OWNER_KEY, JsonPrimitive(stamp))
     }
 }
 

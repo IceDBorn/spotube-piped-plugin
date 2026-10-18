@@ -142,7 +142,10 @@ internal class AccountCache(
         return epochMillis() - state.refreshedAt >= ACCOUNT_REFRESH_TTL_MS
     }
 
-    private suspend fun refresh(account: PipedAccount) {
+    // Pinned, so a refresh that ends after an account switch writes only into its own account's data.
+    private suspend fun refresh(account: PipedAccount) = store.forAccount(account) { refreshFor(account) }
+
+    private suspend fun refreshFor(account: PipedAccount) {
         val entries = http.listing(account) ?: return
         val storageActive = storage?.prepare(account) == true
         if (storageActive) return refreshWithStorage(account, entries, storage)

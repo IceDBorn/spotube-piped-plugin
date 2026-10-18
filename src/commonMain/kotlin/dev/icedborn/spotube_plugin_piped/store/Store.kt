@@ -9,8 +9,12 @@ import dev.icedborn.spotube_plugin_piped.client.canonicalArtistId
 import dev.icedborn.spotube_plugin_piped.client.json
 import dev.icedborn.spotube_plugin_piped.client.toTrack
 import dev.icedborn.spotube_plugin_piped.core.AccountIdentity
+import dev.icedborn.spotube_plugin_piped.core.Profile
+import dev.icedborn.spotube_plugin_piped.core.ProfileElement
+import dev.icedborn.spotube_plugin_piped.core.Profiles
 import dev.icedborn.spotube_plugin_piped.core.distinctWindow
 import dev.icedborn.spotube_plugin_piped.core.epochMillis
+import dev.icedborn.spotube_plugin_piped.core.isProfileKey
 import dev.icedborn.spotube_plugin_piped.core.offsetPage
 import dev.krtirtho.plugin_interfaces.extras.logger.Logger
 import dev.krtirtho.plugin_interfaces.host_apis.PersistedStorageAPI
@@ -21,6 +25,7 @@ import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
@@ -37,6 +42,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.coroutines.coroutineContext
 
 private const val TRACK_KEY = "track:"
 private const val LIST_KEY = "list:"
@@ -45,45 +51,26 @@ private const val CHANNEL_AT_KEY = "channel.at:"
 private const val STREAMS_KEY = "streams:"
 private const val TRACK_ALBUM_KEY = "track-album:"
 private const val LIBRARY_KEY = "piped.library"
-private const val PLAYLISTS_KEY = "piped.playlists"
+internal const val PLAYLISTS_KEY = "piped.playlists"
 private const val ACCOUNT_STATE_KEY = "acct.state"
 
-/** Channels (top tracks, uploads, avatar) are re-fetched after this age; a failed re-fetch serves the stale copy. */
 internal const val CHANNEL_CACHE_TTL_MS = 12 * 60 * 60_000L
-
-/** In-memory cap in JSON characters; the least recently used entries fall back to host storage. */
 private const val MEMORY_CHAR_LIMIT = 8_000_000L
-
-/** Cap on remembered misses, so a long session of lookups cannot grow the set without bound. */
 private const val MISSING_LIMIT = 10_000
-
-/** Access order of evictable cache entries (a counter per touch), stored as one object. */
 private const val ACCESS_INDEX_KEY = "cache.access"
 private val EVICTABLE_PREFIXES = listOf(TRACK_KEY, STREAMS_KEY, LIST_KEY, PLAYLIST_ROWS_PREFIX, ALBUM_ROWS_PREFIX, ALBUM_CHAIN_PREFIX)
-
-/** The access index is written after this many new touches, so reads do not each cost a write. */
 private const val ACCESS_FLUSH_EVERY = 100
-
-/** Idle row locks are dropped past this many lists. */
 private const val ROWS_LOCK_LIMIT = 200
-
-/** A track-album verdict for a video proven to be on no album. */
 internal const val NO_ALBUM = "none"
 private const val NO_ALBUM_STAMP = "none@"
-
-/** A proven "no album" is trusted for this long, then the video is looked up again. */
 internal const val NO_ALBUM_TTL_MS = 7 * 24 * 60 * 60_000L
-
-/** Row cache prefix shared with PlaylistRows so account playlists load offline. */
 internal const val PLAYLIST_ROWS_PREFIX = "playlist.rows:"
 internal const val ALBUM_ROWS_PREFIX = "album.rows:"
 
-/** A Piped account playlist as cached after a refresh. */
 @Serializable
 internal data class CachedAccountPlaylist(val id: String, val name: String, val trackCount: Int = -1)
 
-/** Locally cached account snapshot: playlists, saved sets from the "Spotube - Albums/Artists/Favorites"
- * mirrors, and the epoch-millis time of the last successful refresh. */
+/** Locally cached account snapshot: playlists, saved sets, and the epoch-millis time of the last refresh. */
 @Serializable
 internal data class AccountCacheState(
     val playlists: List<CachedAccountPlaylist> = emptyList(),
@@ -91,13 +78,11 @@ internal data class AccountCacheState(
     val savedAlbums: List<String> = emptyList(),
     val savedArtists: List<String> = emptyList(),
     val refreshedAt: Long = 0L,
-    /** Account identity this snapshot belongs to (instance + username). */
     override val instance: String = "",
     override val username: String = "",
 ) : AccountIdentity
 
-/** Small JSON cache over the host persistence API. Raw responses live under typed keys,
- * so converted entities and revisit pages cost zero network calls. */
+/** Small JSON cache over the host persistence API. Raw responses live under typed keys. */
 internal class EntityStore(private val storage: PersistedStorageAPI, private val memoryCharLimit: Long = MEMORY_CHAR_LIMIT) {
 
     private val memory = LinkedHashMap<String, JsonElement>()
@@ -109,6 +94,35 @@ internal class EntityStore(private val storage: PersistedStorageAPI, private val
 
     // Last decoded value per key, reused while the stored element is the same instance.
     private val decoded = HashMap<String, Pair<JsonElement, Any?>>()
+
+    private var profiles: Profiles? = null
+
+    fun useProfiles(profiles: Profiles) {
+        this.profiles = profiles
+    }
+
+    /** The host key of [key]: account-bound keys go through the pinned profile, else the active one. */
+    suspend fun resolvedKey(key: String): String {
+        if (!isProfileKey(key)) return key
+        val profile = coroutineContext[ProfileElement]?.profile ?: profiles?.active() ?: return key
+        return profile.key(key)
+    }
+
+    /** Runs [block] with [profile] pinned. */
+    suspend fun <T> inProfile(profile: Profile, block: suspend () -> T): T = withContext(ProfileElement(profile)) { block() }
+
+    /** Runs [block] on [account]'s profile, so work for it never writes into the account signed in later. */
+    suspend fun <T> forAccount(account: AccountIdentity?, block: suspend () -> T): T {
+        val profile = profiles?.of(account) ?: return block()
+        return inProfile(profile, block)
+    }
+
+    /** Runs [block] on one profile: the pinned one, or the active one at the start. */
+    suspend fun <T> pinned(block: suspend () -> T): T {
+        if (coroutineContext[ProfileElement] != null) return block()
+        val profile = profiles?.active() ?: return block()
+        return inProfile(profile, block)
+    }
 
     private fun remember(key: String, value: JsonElement, chars: Int) {
         forget(key)
@@ -157,8 +171,7 @@ internal class EntityStore(private val storage: PersistedStorageAPI, private val
     /** Every key in host storage. */
     suspend fun keys(): List<String> = storage.getKeys()
 
-    /** Deletes the least recently used entries of each prefix in [caps] beyond its cap. [keep] is never evicted
-     * and does not count toward a cap. */
+    /** Deletes the least recently used entries of each prefix in [caps] beyond its cap. [keep] is never evicted. */
     suspend fun evict(caps: Map<String, Int>, keep: Set<String> = emptySet()) {
         val keys = keys()
         val index = accessIndex()
@@ -173,7 +186,9 @@ internal class EntityStore(private val storage: PersistedStorageAPI, private val
         flushAccess()
     }
 
-    suspend fun get(key: String): JsonElement? {
+    suspend fun get(key: String): JsonElement? = rawGet(resolvedKey(key))
+
+    private suspend fun rawGet(key: String): JsonElement? {
         touch(key)
         memory.remove(key)?.let { hit ->
             // Re-insert at the tail, so reads keep hot entries in memory.
@@ -181,11 +196,9 @@ internal class EntityStore(private val storage: PersistedStorageAPI, private val
             return hit
         }
         if (key in missing) return null
-        val raw = storage.getString(key)
-        if (raw == null) {
+        val raw = storage.getString(key) ?: return null.also {
             if (missing.size > MISSING_LIMIT) missing.clear()
             missing += key
-            return null
         }
         return runCatching { json.parseToJsonElement(raw) }.getOrNull()?.also { remember(key, it, raw.length) }
     }
@@ -193,15 +206,18 @@ internal class EntityStore(private val storage: PersistedStorageAPI, private val
     /** [get] plus decoding, memoized so hot readers do not re-decode large blobs on every call. */
     @Suppress("UNCHECKED_CAST")
     suspend fun <T> getDecoded(key: String, serializer: KSerializer<T>): T? {
-        val raw = get(key) ?: return null
-        decoded[key]?.let { (element, value) -> if (element === raw) return value as T? }
+        val hostKey = resolvedKey(key)
+        val raw = rawGet(hostKey) ?: return null
+        decoded[hostKey]?.let { (element, value) -> if (element === raw) return value as T? }
         val value = runCatching { json.decodeFromJsonElement(serializer, raw) }.getOrNull()
-        decoded[key] = raw to value
+        decoded[hostKey] = raw to value
         return value
     }
 
+    suspend fun put(key: String, value: JsonElement): Boolean = rawPut(resolvedKey(key), value)
+
     /** False when the host write failed. Memory then drops the key, so reads and retries see what storage holds. */
-    suspend fun put(key: String, value: JsonElement): Boolean {
+    private suspend fun rawPut(key: String, value: JsonElement): Boolean {
         touch(key)
         if (memory[key] == value) return true
         val text = value.toString()
@@ -219,7 +235,9 @@ internal class EntityStore(private val storage: PersistedStorageAPI, private val
         }
     }
 
-    suspend fun remove(key: String) {
+    suspend fun remove(key: String) = rawRemove(resolvedKey(key))
+
+    private suspend fun rawRemove(key: String) {
         access?.remove(key)
         forget(key)
         missing += key
@@ -235,9 +253,7 @@ internal class EntityStore(private val storage: PersistedStorageAPI, private val
         }
     }
 
-    suspend fun rememberTrack(track: MetadataTrack) {
-        put(TRACK_KEY + track.id, json.encodeToJsonElement(track))
-    }
+    suspend fun rememberTrack(track: MetadataTrack) = put(TRACK_KEY + track.id, json.encodeToJsonElement(track))
 
     /** Stores [tracks] after a walk, skipping each one already cached unchanged. */
     suspend fun rememberTracks(tracks: List<MetadataTrack>) {
@@ -245,16 +261,13 @@ internal class EntityStore(private val storage: PersistedStorageAPI, private val
     }
 
     suspend fun cachedTrack(id: String): MetadataTrack? = getDecoded(TRACK_KEY + id, MetadataTrack.serializer())
-
     suspend fun cachedAlbumPlaylist(id: String): PipedPlaylistPage? = getDecoded(LIST_KEY + id, PipedPlaylistPage.serializer())
 
     // Page-1 fetch times from this process; the row pager skips its page-1 anchor right after one.
     private val listFetchedAt = HashMap<String, Long>()
 
-    suspend fun cacheAlbumPlaylist(id: String, page: PipedPlaylistPage) {
-        listFetchedAt[id] = epochMillis()
-        put(LIST_KEY + id, json.encodeToJsonElement(page))
-    }
+    suspend fun cacheAlbumPlaylist(id: String, page: PipedPlaylistPage) =
+        put(LIST_KEY + id, json.encodeToJsonElement(page)).also { listFetchedAt[id] = epochMillis() }
 
     fun albumPlaylistFetchedWithin(id: String, windowMs: Long): Boolean = listFetchedAt[id]?.let { epochMillis() - it < windowMs } == true
 
@@ -275,27 +288,23 @@ internal class EntityStore(private val storage: PersistedStorageAPI, private val
 
     // relatedStreams (about 20 rows) and audioStreams are never read back from this cache, and the
     // signed audio URLs expire within hours, so neither belongs in stored rows.
-    suspend fun cacheStreams(id: String, info: PipedStreamsInfo) {
-        put(
-            STREAMS_KEY + id,
-            json.encodeToJsonElement(info.copy(relatedStreams = emptyList(), audioStreams = emptyList())),
-        )
-    }
+    suspend fun cacheStreams(id: String, info: PipedStreamsInfo) = put(
+        STREAMS_KEY + id,
+        json.encodeToJsonElement(info.copy(relatedStreams = emptyList(), audioStreams = emptyList())),
+    )
 
     /** Album id resolved for a track id, or [NO_ALBUM] while a proven "no album" for that video is fresh. */
     suspend fun cachedTrackAlbum(trackId: String): String? {
         val value = (get(TRACK_ALBUM_KEY + trackId) as? JsonPrimitive)?.contentOrNull ?: return null
-        if (value == NO_ALBUM) return null
-        if (!value.startsWith(NO_ALBUM_STAMP)) return value
+        if (value == NO_ALBUM || !value.startsWith(NO_ALBUM_STAMP)) return value.takeIf { it != NO_ALBUM }
         val at = value.removePrefix(NO_ALBUM_STAMP).toLongOrNull() ?: return null
         return NO_ALBUM.takeIf { epochMillis() - at < NO_ALBUM_TTL_MS }
     }
 
     /** Stamps the unstamped "none" verdicts of schema 2 with the current time, so they expire like new ones. */
     suspend fun stampLegacyNoAlbumVerdicts() {
-        for (key in keys().filter { it.startsWith(TRACK_ALBUM_KEY) }) {
-            if ((get(key) as? JsonPrimitive)?.contentOrNull == NO_ALBUM) put(key, JsonPrimitive(NO_ALBUM_STAMP + epochMillis()))
-        }
+        val legacy = keys().filter { it.startsWith(TRACK_ALBUM_KEY) && (get(it) as? JsonPrimitive)?.contentOrNull == NO_ALBUM }
+        legacy.forEach { put(it, JsonPrimitive(NO_ALBUM_STAMP + epochMillis())) }
     }
 
     /** True when [trackId] holds a "none" verdict of any age, including the unstamped one of schema 2. */
@@ -311,11 +320,7 @@ internal class EntityStore(private val storage: PersistedStorageAPI, private val
     }
 
     suspend fun cachedAccountState(): AccountCacheState? = getDecoded(ACCOUNT_STATE_KEY, AccountCacheState.serializer())
-
-    suspend fun cacheAccountState(state: AccountCacheState) {
-        put(ACCOUNT_STATE_KEY, json.encodeToJsonElement(state))
-    }
-
+    suspend fun cacheAccountState(state: AccountCacheState) = put(ACCOUNT_STATE_KEY, json.encodeToJsonElement(state))
     suspend fun removeAccountState() = remove(ACCOUNT_STATE_KEY)
 
     private val rowsLocks = HashMap<String, Mutex>()
@@ -350,19 +355,21 @@ internal data class StoredPlaylist(
  * Piped has no public account API for them. */
 internal class LocalLibrary(private val store: EntityStore) {
 
-    private var state: LibraryState? = null
+    // Decoded state per host key, so each profile keeps its own.
+    private val states = HashMap<String, LibraryState>()
 
-    private suspend fun current(): LibraryState {
-        state?.let { return it }
+    private suspend fun current(): LibraryState = store.pinned {
+        val key = store.resolvedKey(LIBRARY_KEY)
+        states[key]?.let { return@pinned it }
         val loaded = store.get(LIBRARY_KEY)?.let { raw ->
             runCatching { json.decodeFromJsonElement<LibraryState>(raw) }.getOrNull()
         } ?: LibraryState()
-        state = loaded
-        return loaded
+        states[key] = loaded
+        loaded
     }
 
     private suspend fun save(newState: LibraryState) {
-        state = newState
+        states[store.resolvedKey(LIBRARY_KEY)] = newState
         store.put(LIBRARY_KEY, json.encodeToJsonElement(newState))
     }
 
@@ -371,65 +378,62 @@ internal class LocalLibrary(private val store: EntityStore) {
     suspend fun savedArtists(): List<String> = current().artists
     suspend fun savedPlaylists(): List<String> = current().playlists
 
-    suspend fun isSavedTracks(ids: List<String>): List<Boolean> {
-        val set = current().tracks.toHashSet()
-        return ids.map { it in set }
-    }
-
-    suspend fun isSavedAlbums(ids: List<String>): List<Boolean> {
-        val set = current().albums.toHashSet()
-        return ids.map { it in set }
-    }
-
+    suspend fun isSavedTracks(ids: List<String>): List<Boolean> = current().tracks.toHashSet().let { set -> ids.map { it in set } }
+    suspend fun isSavedAlbums(ids: List<String>): List<Boolean> = current().albums.toHashSet().let { set -> ids.map { it in set } }
     suspend fun isSavedArtists(ids: List<String>): List<Boolean> {
         val set = current().artists.map(::canonicalArtistId).toHashSet()
         return ids.map { canonicalArtistId(it) in set }
     }
+    suspend fun isSavedPlaylists(ids: List<String>): List<Boolean> = current().playlists.toHashSet().let { set -> ids.map { it in set } }
 
-    suspend fun isSavedPlaylists(ids: List<String>): List<Boolean> {
-        val set = current().playlists.toHashSet()
-        return ids.map { it in set }
+    suspend fun saveTracks(ids: List<String>) = store.pinned {
+        save(current().let { it.copy(tracks = (it.tracks + ids).distinct()) })
     }
 
-    suspend fun saveTracks(ids: List<String>) = save(current().let { it.copy(tracks = (it.tracks + ids).distinct()) })
-    suspend fun removeTracks(ids: List<String>) = save(current().let { it.copy(tracks = it.tracks.filterNot { x -> x in ids }) })
-    suspend fun saveAlbums(ids: List<String>) = save(current().let { it.copy(albums = (it.albums + ids).distinct()) })
-    suspend fun removeAlbums(ids: List<String>) = save(current().let { it.copy(albums = it.albums.filterNot { x -> x in ids }) })
-    suspend fun saveArtists(ids: List<String>) {
+    suspend fun removeTracks(ids: List<String>) = store.pinned {
+        save(current().let { it.copy(tracks = it.tracks.filterNot { x -> x in ids }) })
+    }
+
+    suspend fun saveAlbums(ids: List<String>) = store.pinned {
+        save(current().let { it.copy(albums = (it.albums + ids).distinct()) })
+    }
+
+    suspend fun removeAlbums(ids: List<String>) = store.pinned {
+        save(current().let { it.copy(albums = it.albums.filterNot { x -> x in ids }) })
+    }
+
+    suspend fun saveArtists(ids: List<String>) = store.pinned {
         val canonical = ids.map(::canonicalArtistId)
         save(current().let { it.copy(artists = (it.artists.map(::canonicalArtistId) + canonical).distinct()) })
     }
-    suspend fun removeArtists(ids: List<String>) {
+
+    suspend fun removeArtists(ids: List<String>) = store.pinned {
         val removed = ids.map(::canonicalArtistId).toHashSet()
         save(current().let { it.copy(artists = it.artists.filterNot { canonicalArtistId(it) in removed }) })
     }
-    suspend fun savePlaylists(ids: List<String>) = save(current().let { it.copy(playlists = (it.playlists + ids).distinct()) })
-    suspend fun removePlaylists(ids: List<String>) = save(current().let { it.copy(playlists = it.playlists.filterNot { x -> x in ids }) })
+
+    suspend fun savePlaylists(ids: List<String>) = store.pinned {
+        save(current().let { it.copy(playlists = (it.playlists + ids).distinct()) })
+    }
+
+    suspend fun removePlaylists(ids: List<String>) = store.pinned {
+        save(current().let { it.copy(playlists = it.playlists.filterNot { x -> x in ids }) })
+    }
 
     // ── locally created playlists ──────────────────────────────────────────
 
     suspend fun storedPlaylists(): List<StoredPlaylist> =
         store.getDecoded(PLAYLISTS_KEY, ListSerializer(StoredPlaylist.serializer())).orEmpty()
 
-    /** The stored playlists, or null when the key holds something that does not decode, so a caller that
-     * deletes from it can tell a corrupt value from an empty one. */
-    suspend fun storedPlaylistsOrNull(): List<StoredPlaylist>? {
-        val raw = store.get(PLAYLISTS_KEY) ?: return emptyList()
-        return runCatching { json.decodeFromJsonElement(ListSerializer(StoredPlaylist.serializer()), raw) }.getOrNull()
-    }
-
-    private suspend fun saveStoredPlaylists(records: List<StoredPlaylist>) {
-        store.put(PLAYLISTS_KEY, json.encodeToJsonElement(records))
-    }
+    private suspend fun saveStoredPlaylists(records: List<StoredPlaylist>) = store.put(PLAYLISTS_KEY, json.encodeToJsonElement(records))
 
     suspend fun storedPlaylist(id: String): StoredPlaylist? = storedPlaylists().firstOrNull { it.id == id }
 
-    suspend fun upsertPlaylist(record: StoredPlaylist) {
-        val records = storedPlaylists().filterNot { it.id == record.id } + record
-        saveStoredPlaylists(records)
+    suspend fun upsertPlaylist(record: StoredPlaylist) = store.pinned {
+        saveStoredPlaylists(storedPlaylists().filterNot { it.id == record.id } + record)
     }
 
-    suspend fun deleteStoredPlaylist(id: String) {
+    suspend fun deleteStoredPlaylist(id: String) = store.pinned {
         saveStoredPlaylists(storedPlaylists().filterNot { it.id == id })
     }
 }
@@ -452,7 +456,6 @@ internal class PlaylistRows(
     private val store: EntityStore,
     private val background: CoroutineScope? = null,
 ) {
-
     suspend fun page(
         id: String,
         isAlbum: Boolean,
@@ -483,16 +486,6 @@ internal fun CachedRows.offsetPage(paging: PaginationStrategy.Offset, knownTotal
     val slice = tracks.drop(paging.offset).take(paging.limit)
     val total = if (knownTotal > 0) knownTotal else tracks.size
     val more = !complete || paging.offset + slice.size < total
-    return PaginationResult(
-        // Pagination math stays on the raw slice; only the served items drop repeats.
-        items = distinctWindow(tracks, paging.offset, slice) { it.id },
-        totalCount = total,
-        nextPagination = if (more &&
-            slice.size >= paging.limit
-        ) {
-            PaginationStrategy.Offset(paging.offset + slice.size, paging.limit)
-        } else {
-            null
-        },
-    )
+    val next = if (more && slice.size >= paging.limit) PaginationStrategy.Offset(paging.offset + slice.size, paging.limit) else null
+    return PaginationResult(items = distinctWindow(tracks, paging.offset, slice) { it.id }, totalCount = total, nextPagination = next)
 }

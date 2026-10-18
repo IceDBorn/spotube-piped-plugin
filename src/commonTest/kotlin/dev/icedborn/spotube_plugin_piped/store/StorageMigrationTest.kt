@@ -3,8 +3,10 @@ package dev.icedborn.spotube_plugin_piped.store
 import dev.icedborn.spotube_plugin_piped.client.AccountHttp
 import dev.icedborn.spotube_plugin_piped.client.json
 import dev.icedborn.spotube_plugin_piped.core.AccountSession
+import dev.icedborn.spotube_plugin_piped.core.BARE_PROFILE
 import dev.icedborn.spotube_plugin_piped.core.InstanceSource
 import dev.icedborn.spotube_plugin_piped.core.PipedAccount
+import dev.icedborn.spotube_plugin_piped.core.Profiles
 import dev.icedborn.spotube_plugin_piped.core.epochMillis
 import dev.icedborn.spotube_plugin_piped.fakes.FAKE_INSTANCE
 import dev.icedborn.spotube_plugin_piped.fakes.FakePiped
@@ -28,13 +30,14 @@ class StorageMigrationTest {
         val piped = FakePiped()
         val storage = FakeStorage()
         val store = EntityStore(storage)
-        val library = LocalLibrary(store)
         val session = AccountSession(store)
+        val profiles = Profiles(store, session).also { store.useProfiles(it) }
+        val library = LocalLibrary(store)
         val instance = InstanceSource(store, FAKE_INSTANCE)
 
         suspend fun signIn() = session.save(PipedAccount(FAKE_INSTANCE, "ice", "token-ice"))
 
-        val migration = StorageMigration(AccountHttp(piped), store, library, session, instance)
+        val migration = StorageMigration(AccountHttp(piped), store, library, session, instance, profiles)
 
         suspend fun migrate() = migration.run()
 
@@ -48,9 +51,11 @@ class StorageMigrationTest {
         h.piped.accountPlaylist("Spotube - Favorites", emptyList(), id = "uuid-fav")
         h.piped.accountPlaylist("Mine", emptyList(), id = "uuid-x")
         h.store.put("saved.playlist:track", JsonPrimitive("uuid-fav"))
-        h.library.upsertPlaylist(StoredPlaylist(id = "piped-x", name = "piped-x"))
+        h.store.inProfile(BARE_PROFILE) {
+            h.library.upsertPlaylist(StoredPlaylist(id = "piped-x", name = "piped-x"))
+            h.library.upsertPlaylist(StoredPlaylist(id = "piped-gone", name = "piped-gone"))
+        }
         h.store.put("mirror.playlist:piped-x", JsonPrimitive("uuid-x"))
-        h.library.upsertPlaylist(StoredPlaylist(id = "piped-gone", name = "piped-gone"))
         h.store.put("mirror.playlist:piped-gone", JsonPrimitive("uuid-gone"))
         h.migrate()
         assertEquals(StoredPlaylistId(FAKE_INSTANCE, "ice", "uuid-fav"), h.binding("saved.playlist:track"))
@@ -59,6 +64,7 @@ class StorageMigrationTest {
         assertEquals(JsonPrimitive("uuid-gone"), h.store.get("mirror.playlist:piped-gone"))
         h.session.save(PipedAccount(FAKE_INSTANCE, "bob", "token-bob"))
         h.piped.accountPlaylist("Theirs", emptyList(), id = "uuid-gone")
+        h.library.upsertPlaylist(StoredPlaylist(id = "piped-gone", name = "piped-gone"))
         h.migration.adoptBareBindings()
         assertEquals(StoredPlaylistId(FAKE_INSTANCE, "bob", "uuid-gone"), h.binding("mirror.playlist:piped-gone"))
     }
@@ -66,7 +72,9 @@ class StorageMigrationTest {
     @Test
     fun `bare uuid bindings wait for a session and a reachable listing`() = runTest {
         val h = Harness()
-        h.library.upsertPlaylist(StoredPlaylist(id = "piped-x", name = "piped-x"))
+        h.store.inProfile(BARE_PROFILE) {
+            h.library.upsertPlaylist(StoredPlaylist(id = "piped-x", name = "piped-x"))
+        }
         h.store.put("mirror.playlist:piped-x", JsonPrimitive("uuid-x"))
         h.migrate()
         assertEquals(JsonPrimitive("uuid-x"), h.store.get("mirror.playlist:piped-x"))
@@ -157,7 +165,7 @@ class StorageMigrationTest {
     fun `Topic artist ids become canonical in reps and the library`() = runTest {
         val h = Harness()
         h.store.put("saved.rep:artist:channel:Alpha - Topic", JsonPrimitive(vid(1)))
-        h.library.saveArtists(listOf("channel:Alpha - Topic"))
+        h.store.inProfile(BARE_PROFILE) { h.library.saveArtists(listOf("channel:Alpha - Topic")) }
         h.migrate()
         assertNull(h.store.get("saved.rep:artist:channel:Alpha - Topic"))
         assertEquals(JsonPrimitive(vid(1)), h.store.get("saved.rep:artist:channel:Alpha"))
@@ -194,8 +202,10 @@ class StorageMigrationTest {
     @Test
     fun `old account playlist copies are deleted`() = runTest {
         val h = Harness()
-        h.library.upsertPlaylist(StoredPlaylist(id = "piped-acct-1", name = "Old"))
-        h.library.savePlaylists(listOf("piped-acct-1"))
+        h.store.inProfile(BARE_PROFILE) {
+            h.library.upsertPlaylist(StoredPlaylist(id = "piped-acct-1", name = "Old"))
+            h.library.savePlaylists(listOf("piped-acct-1"))
+        }
         h.migrate()
         assertTrue(h.library.storedPlaylists().isEmpty())
     }
@@ -243,15 +253,17 @@ class StorageMigrationTest {
     fun `a copy binding of a deleted playlist is dropped at start`() = runTest {
         val h = Harness()
         h.signIn()
-        h.library.upsertPlaylist(StoredPlaylist(id = "piped-keep", name = "keep"))
-        h.library.upsertPlaylist(StoredPlaylist(id = "piped-gone", name = "gone"))
+        h.store.inProfile(BARE_PROFILE) {
+            h.library.upsertPlaylist(StoredPlaylist(id = "piped-keep", name = "keep"))
+            h.library.upsertPlaylist(StoredPlaylist(id = "piped-gone", name = "gone"))
+            h.library.deleteStoredPlaylist("piped-gone")
+        }
         h.store.put("mirror.playlist:piped-keep", JsonPrimitive("uuid-keep"))
         h.store.put("mirror.playlist:piped-gone", JsonPrimitive("uuid-gone"))
         h.store.put("binding.miss:mirror.playlist:piped-gone", JsonArray(listOf(JsonPrimitive("other|bob"))))
         h.store.put("mirror.pending:piped-gone", JsonPrimitive("uuid-old"))
         h.store.put("binding.miss:mirror.playlist:piped-keep", JsonArray(listOf(JsonPrimitive("other|bob"))))
         h.store.put("mirror.pending:piped-keep", JsonPrimitive(true))
-        h.library.deleteStoredPlaylist("piped-gone")
         h.migrate()
         assertNotNull(h.store.get("mirror.playlist:piped-keep"))
         assertNull(h.store.get("mirror.playlist:piped-gone"))
@@ -266,10 +278,109 @@ class StorageMigrationTest {
     fun `a corrupt playlist list leaves every copy binding alone`() = runTest {
         val h = Harness()
         h.signIn()
-        h.store.put("piped.playlists", JsonPrimitive("not a list"))
+        h.store.inProfile(BARE_PROFILE) {
+            h.store.put("piped.playlists", JsonPrimitive("not a list"))
+        }
         h.store.put("mirror.playlist:piped-gone", JsonPrimitive("uuid-gone"))
         h.migrate()
         assertNotNull(h.store.get("mirror.playlist:piped-gone"))
+    }
+
+    @Test
+    fun `signed in, the account keeps the library and the signed-out state gets a copy`() = runTest {
+        val h = Harness()
+        h.storage.values["piped.library"] = """{"tracks":["${vid(1)}"]}"""
+        h.storage.values["history.tracks"] = "[]"
+        h.storage.values["storage.owner"] = "\"$FAKE_INSTANCE|ice\""
+        h.storage.values["storage.own:lib"] = "[]"
+        h.signIn()
+        h.migrate()
+        assertEquals(listOf(vid(1)), h.library.savedTracks())
+        assertEquals("\"$FAKE_INSTANCE|ice\"", h.storage.values["profiles.legacy"])
+        assertEquals("""{"tracks":["${vid(1)}"]}""", h.storage.values["pout.piped.library"])
+        assertEquals("[]", h.storage.values["pout.history.tracks"])
+        assertTrue("storage.own:lib" in h.storage.values)
+        assertNull(h.storage.values["storage.owner"])
+        h.session.clear()
+        assertEquals(listOf(vid(1)), h.library.savedTracks())
+    }
+
+    @Test
+    fun `signed in as another owner, the old sync state goes`() = runTest {
+        val h = Harness()
+        h.storage.values["storage.owner"] = "\"$FAKE_INSTANCE|bob\""
+        h.storage.values["storage.own:lib"] = "[]"
+        h.storage.values["storage.device"] = "\"aaaa0001\""
+        h.signIn()
+        h.migrate()
+        assertNull(h.storage.values["storage.own:lib"])
+        assertEquals("\"aaaa0001\"", h.storage.values["storage.device"])
+    }
+
+    @Test
+    fun `signed out, the signed-out state keeps the library and the sync state goes`() = runTest {
+        val h = Harness()
+        h.storage.values["piped.library"] = """{"tracks":["${vid(1)}"]}"""
+        h.storage.values["storage.own:lib"] = "[]"
+        h.storage.values["history.pending"] = "{}"
+        h.migrate()
+        assertEquals("\"out\"", h.storage.values["profiles.legacy"])
+        assertEquals(listOf(vid(1)), h.library.savedTracks())
+        assertNull(h.storage.values["storage.own:lib"])
+        assertNull(h.storage.values["history.pending"])
+        h.signIn()
+        assertEquals(emptyList(), h.library.savedTracks())
+    }
+
+    @Test
+    fun `a failed copy stops the step and the rerun finishes it`() = runTest {
+        val h = Harness()
+        h.storage.values["piped.library"] = """{"tracks":["${vid(1)}"]}"""
+        h.signIn()
+        h.storage.failPutsFor = "pout."
+        h.migrate()
+        assertEquals("3", h.storage.values["schema.version"])
+        h.storage.failPutsFor = null
+        h.migrate()
+        assertEquals("4", h.storage.values["schema.version"])
+        assertEquals("""{"tracks":["${vid(1)}"]}""", h.storage.values["pout.piped.library"])
+    }
+
+    @Test
+    fun `a rerun under another session keeps the first owner of the bare keys`() = runTest {
+        val h = Harness()
+        h.storage.values["piped.library"] = """{"tracks":["${vid(1)}"]}"""
+        h.storage.values["storage.owner"] = "\"$FAKE_INSTANCE|ice\""
+        h.storage.values["storage.own:lib"] = "[]"
+        h.signIn()
+        h.storage.failPutsFor = "pout."
+        h.migrate()
+        h.storage.failPutsFor = null
+        h.session.save(PipedAccount(FAKE_INSTANCE, "bob", "token-bob"))
+        h.migrate()
+        assertEquals("4", h.storage.values["schema.version"])
+        assertEquals("\"$FAKE_INSTANCE|ice\"", h.storage.values["profiles.legacy"])
+        assertTrue("storage.own:lib" in h.storage.values)
+        assertEquals(emptyList(), h.library.savedTracks())
+        assertEquals("""{"tracks":["${vid(1)}"]}""", h.storage.values["pout.piped.library"])
+    }
+
+    @Test
+    fun `orphan cleanup keeps bindings of every profile's playlists`() = runTest {
+        val h = Harness()
+        h.signIn()
+        h.migrate()
+        h.library.upsertPlaylist(StoredPlaylist(id = "piped-ice", name = "x"))
+        h.store.put("mirror.playlist:piped-ice", JsonPrimitive("uuid-1"))
+        h.session.save(PipedAccount(FAKE_INSTANCE, "bob", "token-bob"))
+        h.migrate()
+        assertNotNull(h.store.get("mirror.playlist:piped-ice"))
+        h.library.upsertPlaylist(StoredPlaylist(id = "piped-bob", name = "y"))
+        h.store.put("mirror.playlist:piped-bob", JsonPrimitive("uuid-2"))
+        h.signIn()
+        h.migrate()
+        assertNotNull(h.store.get("mirror.playlist:piped-ice"))
+        assertNotNull(h.store.get("mirror.playlist:piped-bob"))
     }
 
     @Test
