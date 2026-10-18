@@ -89,6 +89,24 @@ class SyncedPlaylistsTest {
     }
 
     @Test
+    fun `a newer edit from another device replaces an edit not yet pushed`() = runTest {
+        val piped = FakePiped()
+        val a = AccountHarness(backgroundScope, piped, storageSync = true)
+        val b = AccountHarness(backgroundScope, piped, storageSync = true)
+        pair(piped, a, b)
+        b.library.upsertPlaylist(StoredPlaylist(id = "piped-p", name = "From B"))
+        b.mirror.mirrorCreatePlaylist("piped-p", "From B", emptyList())
+        a.clock += 1_000
+        a.library.upsertPlaylist(StoredPlaylist(id = "piped-p", name = "From A"))
+        a.mirror.mirrorCreatePlaylist("piped-p", "From A", emptyList())
+        a.sync!!.sync(a.session.load()!!, null)
+
+        b.sync!!.sync(b.session.load()!!, null)
+
+        assertEquals("From A", b.library.storedPlaylist("piped-p")?.name)
+    }
+
+    @Test
     fun `a large image stays on its device`() = runTest {
         val piped = FakePiped()
         val a = AccountHarness(backgroundScope, piped, storageSync = true)

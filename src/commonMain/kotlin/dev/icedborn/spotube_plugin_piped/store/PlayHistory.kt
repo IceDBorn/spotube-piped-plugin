@@ -36,6 +36,21 @@ internal fun mergeRemotePlays(local: List<PlayedTrack>, remote: List<MetadataTra
     return merged.take(HISTORY_LIMIT)
 }
 
+/** [local] raised to [merged]: a count or play time only grows, so plays not shared yet stay. Newest play first.
+ * A play time from another device also moves the replay window of [PlayHistory.record]. */
+internal fun combinePlays(local: List<PlayedTrack>, merged: List<PlayedTrack>): List<PlayedTrack> {
+    val byId = LinkedHashMap<String, PlayedTrack>()
+    local.forEach { byId[it.track.id] = it }
+    for (remote in merged) {
+        val mine = byId[remote.track.id]
+        byId[remote.track.id] = mine?.copy(
+            plays = maxOf(mine.plays, remote.plays),
+            lastPlayedAt = maxOf(mine.lastPlayedAt, remote.lastPlayedAt),
+        ) ?: remote
+    }
+    return byId.values.sortedByDescending { it.lastPlayedAt }.take(HISTORY_LIMIT)
+}
+
 /** The host sends plugins no play history, so the plugin logs every track the audio API resolves.
  * A track the host preloads counts too, even if it is skipped. */
 internal class PlayHistory(private val store: EntityStore) {
@@ -67,6 +82,15 @@ internal class PlayHistory(private val store: EntityStore) {
             val local = all()
             store.put(HISTORY_KEY, json.encodeToJsonElement(mergeRemotePlays(local, remote, firstContact)))
         }
+    }
+
+    /** Stores [combinePlays] of [merged]. False when the write failed. */
+    suspend fun mergeCounts(merged: List<PlayedTrack>): Boolean = writeLock.withLock {
+        // Read into a val first: QuickJS cannot compile a suspend call nested in a call's arguments inside withLock.
+        val local = all()
+        val combined = combinePlays(local, merged)
+        if (combined == local) return@withLock true
+        store.put(HISTORY_KEY, json.encodeToJsonElement(combined))
     }
 
     /** Most recent first, one entry per track. */

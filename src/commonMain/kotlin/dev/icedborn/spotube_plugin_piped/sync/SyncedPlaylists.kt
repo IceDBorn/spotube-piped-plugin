@@ -45,16 +45,20 @@ internal class SyncedPlaylists(override val own: LwwStore, private val store: En
         store.remove(TOUCHED_KEY)
     }
 
+    /** True when an edit made here at [at] and not pushed yet wins over [winner] once pushed, as `mergeLww` decides. */
+    private fun keepsLocal(at: Long?, winner: Winner, self: String): Boolean =
+        at != null && (at > winner.entry.at || (at == winner.entry.at && self > winner.device))
+
     private fun encode(record: StoredPlaylist) = json.encodeToJsonElement(
         StoredPlaylist.serializer(),
         if (record.imageBase64.length > PLAYLIST_IMAGE_LIMIT) record.copy(imageBase64 = "") else record,
     )
 
     override suspend fun apply(winners: Map<String, Winner>, self: String) {
-        val pending = touched().keys
+        val pending = touched()
         for (winner in winners.values) {
             val id = winner.entry.key
-            if (winner.device == self || id in pending) continue
+            if (winner.device == self || keepsLocal(pending[id], winner, self)) continue
             val local = library.storedPlaylist(id)
             val listed = library.savedPlaylists()
             if (winner.entry.removed) {

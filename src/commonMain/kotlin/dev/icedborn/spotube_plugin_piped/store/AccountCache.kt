@@ -209,12 +209,14 @@ internal class AccountCache(
         }
     }
 
-    /** Storage holds the saved sets, so the mirrors are neither walked nor resolved. The history log stays. */
+    /** Storage holds the saved sets and, once imported, the plays. The history log is merged one last time before
+     * that import and then neither walked, trimmed nor written. */
     private suspend fun refreshWithStorage(account: PipedAccount, entries: List<JsonObject>, storage: StorageSync) {
         val previous = store.cachedAccountState()?.takeIf { sameAccount(it, account) }
         val historySince = historySync.generation
         val historyId = historySync.playlistIn(account, entries)
-        val listed = attribute(account, entries).filter { it.kind == null }
+        val logId = historyId?.takeUnless { storage.historyImported(account) }
+        val listed = attribute(account, entries).filter { it.kind == null && (it.uuid != historyId || it.uuid == logId) }
         val walks = listed.mapConcurrently(3) { item ->
             val isLog = item.uuid == historyId
             val walk = if (isLog) http.walk(account, item.uuid, pageLimit = MIRROR_PAGE_LIMIT) else http.walk(account, item.uuid)
@@ -222,6 +224,8 @@ internal class AccountCache(
             item to walk
         }
         if (!stillSignedIn(account)) return
+        val logWalk = walks.firstOrNull { it.first.uuid == logId }?.second?.takeIf(::provenEnd)
+        if (logId != null && logWalk != null) orNull("history merge") { historySync.merge(account, logId, logWalk, historySince) }
         orNull("storage sync") { storage.sync(account, previous) }
         if (!stillSignedIn(account)) return
         val playlists = mutableListOf<CachedAccountPlaylist>()
@@ -234,8 +238,6 @@ internal class AccountCache(
         val state =
             AccountCacheState(playlists = playlists, refreshedAt = epochMillis(), instance = account.instance, username = account.username)
         store.cacheAccountState(state)
-        val historyWalk = walks.firstOrNull { it.first.uuid == historyId }?.second?.takeIf(::provenEnd)
-        syncHistory(account, historyId, historyWalk, historySince)
     }
 
     /** Merges a history log walked to its end, then trims it and retries the waiting plays in the background. */

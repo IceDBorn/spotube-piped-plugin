@@ -21,6 +21,7 @@ private const val DIRTY_KEY = "storage.dirty"
 internal val ACCOUNT_SYNC_PREFIXES = listOf(
     OWN_PREFIX, DIRTY_KEY, "storage.remote:", "storage.etag:", "storage.registry", "storage.registered",
     "storage.versions", "storage.manifest.dirty", "storage.imported", "storage.pl.touched",
+    "storage.hist.cursor", "storage.dict.pending",
 )
 
 internal class SyncOwner(private val store: EntityStore, private val random: Random = Random.Default) {
@@ -54,6 +55,12 @@ internal class LwwStore(private val store: EntityStore, val suffix: String) {
     suspend fun record(updates: List<LwwEntry>): Boolean = write(updates, replace = true)
 
     suspend fun recordIfAbsent(updates: List<LwwEntry>): Boolean = write(updates, replace = false)
+
+    suspend fun replaceAll(entries: List<LwwEntry>): Boolean = lock.withLock {
+        val encoded = json.encodeToJsonElement(serializer, entries)
+        val ok = store.put(key, encoded)
+        ok
+    }
 
     private suspend fun write(updates: List<LwwEntry>, replace: Boolean): Boolean = lock.withLock {
         val current = entries()
@@ -102,8 +109,14 @@ internal interface SyncKind {
     val suffix: String
     val own: LwwStore
 
+    /** Every file of the kind, each pushed and pulled on its own. Most kinds have one. */
+    val files: List<LwwStore> get() = listOf(own)
+
     suspend fun beforeFlush() {}
 
     /** Applies the merged winners of every device to the local state. */
-    suspend fun apply(winners: Map<String, Winner>, self: String)
+    suspend fun apply(winners: Map<String, Winner>, self: String) {}
+
+    /** Gets every device's copy of every file of the kind. A kind that counts instead of overwriting overrides it. */
+    suspend fun applyDocs(docs: List<SyncDoc>, self: String) = apply(mergeLww(docs), self)
 }

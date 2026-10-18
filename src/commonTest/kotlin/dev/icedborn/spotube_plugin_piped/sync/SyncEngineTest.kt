@@ -46,6 +46,113 @@ class SyncEngineTest {
 
     private suspend fun device(piped: FakePiped, id: String) = Device(piped).also { it.setUp(ice, id) }
 
+    private class TwoFileKind(store: EntityStore) : SyncKind {
+        override val suffix = "h0"
+        override val own = LwwStore(store, "h0")
+        val second = LwwStore(store, "h1")
+        override val files: List<LwwStore> get() = listOf(own, second)
+        var docs: List<SyncDoc> = emptyList()
+        var applied = 0
+
+        override suspend fun applyDocs(docs: List<SyncDoc>, self: String) {
+            this.docs = docs
+            applied++
+        }
+    }
+
+    private class TwoFileDevice(piped: FakePiped, store: EntityStore, owner: SyncOwner) {
+        val kind = TwoFileKind(store)
+        val marks = DirtyMarks(store)
+        val engine = SyncEngine(StorageHttp(piped), store, owner, marks, listOf(kind)) { 100L }
+    }
+
+    private suspend fun twoFileDevice(piped: FakePiped, id: String): TwoFileDevice {
+        val store = EntityStore(FakeStorage())
+        store.put("storage.device", JsonPrimitive(id))
+        val owner = SyncOwner(store)
+        owner.ensure(ice)
+        return TwoFileDevice(piped, store, owner)
+    }
+
+    @Test
+    fun `a kind with several files pushes each and gets every copy of each`() = runTest {
+        val piped = FakePiped()
+        val a = twoFileDevice(piped, "aaaa0001")
+        val b = twoFileDevice(piped, "bbbb0002")
+        a.kind.own.record(listOf(LwwEntry("x", 1, JsonPrimitive(1))))
+        a.kind.second.record(listOf(LwwEntry("y", 2, JsonPrimitive(1))))
+        a.marks.mark("h0")
+        a.marks.mark("h1")
+        a.engine.flush(ice)
+        assertTrue("ice/spaaaa0001h0" in piped.files)
+        assertTrue("ice/spaaaa0001h1" in piped.files)
+
+        b.engine.pull(ice)
+
+        assertEquals(4, b.kind.docs.size)
+        val fromA = b.kind.docs.filter { it.device == "aaaa0001" }.flatMap { it.entries }.map { it.key }
+        assertEquals(setOf("x", "y"), fromA.toSet())
+    }
+
+    @Test
+    fun `a pull applies a kind only when one of its remote files moved`() = runTest {
+        val piped = FakePiped()
+        val a = twoFileDevice(piped, "aaaa0001")
+        val b = twoFileDevice(piped, "bbbb0002")
+        a.kind.own.record(listOf(LwwEntry("x", 1, JsonPrimitive(1))))
+        a.marks.mark("h0")
+        a.engine.flush(ice)
+        b.engine.pull(ice)
+        assertEquals(1, b.kind.applied)
+
+        b.engine.pull(ice)
+        assertEquals(1, b.kind.applied)
+
+        a.kind.second.record(listOf(LwwEntry("y", 2, JsonPrimitive(1))))
+        a.marks.mark("h1")
+        a.engine.flush(ice)
+        b.engine.pull(ice)
+        assertEquals(2, b.kind.applied)
+    }
+
+    @Test
+    fun `a file that did not arrive is fetched again without holding back the others`() = runTest {
+        val piped = FakePiped()
+        val a = twoFileDevice(piped, "aaaa0001")
+        val b = twoFileDevice(piped, "bbbb0002")
+        a.kind.own.record(listOf(LwwEntry("x", 1, JsonPrimitive(1))))
+        a.kind.second.record(listOf(LwwEntry("y", 1, JsonPrimitive(1))))
+        a.marks.mark("h0")
+        a.marks.mark("h1")
+        a.engine.flush(ice)
+        piped.override("/storage/get?file=spaaaa0001h1", body = "{}", times = 1)
+        val fromA = { b.kind.docs.filter { it.device == "aaaa0001" }.flatMap { it.entries }.map { it.key }.toSet() }
+
+        b.engine.pull(ice)
+
+        assertEquals(setOf("x"), fromA())
+        piped.reset()
+        b.engine.pull(ice)
+        assertEquals(setOf("x", "y"), fromA())
+        assertEquals(0, piped.count("/storage/get?file=spaaaa0001h0"))
+    }
+
+    @Test
+    fun `a failed put does not hold back the kind's other files`() = runTest {
+        val piped = FakePiped()
+        val a = twoFileDevice(piped, "aaaa0001")
+        a.kind.own.record(listOf(LwwEntry("x", 1, JsonPrimitive(1))))
+        a.kind.second.record(listOf(LwwEntry("y", 1, JsonPrimitive(1))))
+        a.marks.mark("h0")
+        a.marks.mark("h1")
+        piped.override("/storage/stat?file=spaaaa0001h0", status = 500, times = 1)
+
+        a.engine.flush(ice)
+
+        assertTrue("ice/spaaaa0001h1" in piped.files)
+        assertEquals(listOf("h0"), a.marks.all())
+    }
+
     @Test
     fun `two devices register without losing each other`() = runTest {
         val piped = FakePiped()

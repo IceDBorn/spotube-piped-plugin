@@ -93,7 +93,7 @@ private suspend fun start() {
     val systemInfo = runCatching { zipline.take<SystemInformationAPI>(SystemInformationAPI_SERVICE_NAME) }.getOrNull()
     val region = RegionSetting(store, systemInfo)
     val libraryPlaylist = LibraryPlaylistSetting(store)
-    val storageSync = StorageSync(httpClient, store, library, region, libraryPlaylist, initScope) { session.load() }
+    val storageSync = StorageSync(httpClient, store, library, history, region, libraryPlaylist, initScope) { session.load() }
     val mirror = PipedSavedLibrary(
         httpClient,
         store,

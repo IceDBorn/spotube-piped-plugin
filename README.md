@@ -149,6 +149,12 @@ playlist, does not clear the history on any device. The next scrobbled play crea
 the playlist then holds only the plays made from then on. The history on a device belongs to the device, not to
 an account, so plays merged from two accounts land in the same history.
 
+With [storage sync](#storage-requests) active, plays sync through storage files instead of the playlist. Each
+scrobbled play is stored with its time, so other devices show real counts and play times. The first sync on a
+device reads the history playlist one last time and keeps the counts the device has as its starting point. Where
+two devices start from overlapping counts, the larger one counts. After that the playlist is no longer read or
+written. Track details travel with the plays, so other devices skip the fetches.
+
 ### Audio streams
 
 Before it offers a stream, the plugin sends a HEAD request to check that the instance's proxy serves it, because
@@ -202,8 +208,15 @@ With storage active, a save or unsave costs no request at once. Changes go out 3
 and at each account refresh: 2 requests per changed kind (library, settings, playlists) plus 2 for the device's
 manifest. Each refresh reads the device list and each other device's manifest, 1 request each, and fetches only
 the files that changed. The storage check costs 2 requests and runs at most once a day. The first sync on a device
-also writes the device into the device list, 2 or 3 requests, and reads its own manifest, 1 or 2 requests. The
-history log keeps its playlist and its costs.
+also writes the device into the device list, 2 or 3 requests, and reads its own manifest, 1 or 2 requests.
+
+A scrobbled play costs no request at once. The next push sends the open play file, 2 requests, and for a track the
+device has not shared before one track details file, 2 more. Plays within the 30 seconds share one push. Once all
+16 play files are full, every 1,000th play folds the oldest one into the counts file `agg`, and that push sends
+`agg` too, 2 more requests. The first sync with play history reads the history playlist once more, 1 request per
+page, and the device's own manifest, 1 or 2 requests. The push after it sends `agg` and up to 16 track details
+files, 2 requests each. After an account switch and back, the device reads the play files it published before, 1
+request each, instead of sending a new `agg`.
 
 [docs/design.md](docs/design.md) lists the storage keys, the index format and the row cache rules.
 
@@ -261,6 +274,9 @@ sign-in and when a write to the account fails, so check a log before sharing it.
 
 ## Known limitations
 
+- Devices on a plugin version from before play sync keep writing the history playlist, and a device with storage
+  active no longer reads it, so plays do not pass between the two.
+- Play history is per device, so a device signed in to two accounts shares its play counts with both.
 - Spotube Nightly has a Region setting (Settings -> Language & Region), but it does not pass it to plugins yet.
 - Spotube Nightly does not pass its theme colors to plugins, so the settings form cannot follow the app theme. The
   form has its own light/dark toggle, remembered between openings, and does not switch itself when you change the

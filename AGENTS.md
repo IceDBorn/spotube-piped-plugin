@@ -47,8 +47,8 @@ The account sync in `store` is split into `PipedSavedLibrary` (the facade the AP
 and refresh), `MirrorWriter` and `MirrorRemoval` (save and unsave), `PlaylistMirror` (copies of local playlists),
 `SavedSetResolver` (maps mirror rows back to albums and artists), `SavedBindings` and `HistorySync` (uploads
 scrobbled plays to the history log and merges the plays of other devices, with its pure rules in `HistoryLog.kt`).
-With storage active, `AccountCache` skips the mirrors and `StorageSync` carries the saved sets, settings and
-local playlists.
+With storage active, `AccountCache` skips the mirrors and `StorageSync` carries the saved sets, settings, local
+playlists and, after its import, the plays.
 
 `src/jsMain/.../Main.kt` takes the host services from Zipline, runs `StorageMigration` before any role is bound,
 binds the roles, then starts the account refresh when a session is stored.

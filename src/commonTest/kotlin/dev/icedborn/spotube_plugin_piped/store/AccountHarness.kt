@@ -34,6 +34,7 @@ internal class AccountHarness(
             piped,
             store,
             library,
+            history,
             RegionSetting(store, null),
             LibraryPlaylistSetting(store),
             scope,

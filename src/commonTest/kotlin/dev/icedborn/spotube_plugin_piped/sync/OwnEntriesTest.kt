@@ -23,6 +23,14 @@ class OwnEntriesTest {
     }
 
     @Test
+    fun `replaceAll swaps every entry of the kind`() = runTest {
+        val own = LwwStore(EntityStore(FakeStorage()), "h0")
+        own.record(listOf(LwwEntry("x", 1, JsonPrimitive(1)), LwwEntry("y", 2, JsonPrimitive(1))))
+        own.replaceAll(listOf(LwwEntry("z", 3, JsonPrimitive(1))))
+        assertEquals(listOf("z"), own.entries().map { it.key })
+    }
+
+    @Test
     fun `a record replaces the entry of its key and recordIfAbsent keeps it`() = runTest {
         val own = LwwStore(EntityStore(FakeStorage()), "lib")
         own.record(listOf(LwwEntry("t:x", 5, JsonPrimitive(1))))

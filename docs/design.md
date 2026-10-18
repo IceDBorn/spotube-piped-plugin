@@ -143,7 +143,7 @@ so switching accounts never writes into the previous account's playlists.
 | `storage.support` | `StorageVerdict` for one account |
 | `storage.device` | This device's id, 8 letters and digits |
 | `storage.owner` | Account stamp the keys below belong to |
-| `storage.own:<suffix>` | Entries this device authored for `lib`, `set` or `pl` |
+| `storage.own:<suffix>` | Entries authored here, per suffix (`lib`, `set`, `pl`, `h0`-`h15`, `agg`, `t0`-`t15`) |
 | `storage.dirty` | Kinds waiting for a push |
 | `storage.versions` | This device's manifest versions |
 | `storage.manifest.dirty` | The manifest still needs a push |
@@ -153,6 +153,9 @@ so switching accounts never writes into the previous account's playlists.
 | `storage.remote:<device>:<suffix>` | Another device's file with its manifest version |
 | `storage.imported` | Account stamp of the finished import |
 | `storage.pl.touched` | Local playlists changed since the last push, with times |
+| `storage.hist.cursor` | Generation of the open play segment |
+| `storage.dict.pending` | Track ids waiting for the dictionary |
+| `storage.imported.history` | Account stamp of the finished history import |
 
 ## Mirror index
 
@@ -226,7 +229,8 @@ Storage files belong to the account and use short names:
 - `spdevices`: Device registry (`DeviceRegistry`) listing registered device ids and their registration timestamps.
 - `sp<device>m`: Device manifest (`DeviceManifest`), mapping kind suffixes (`lib`, `set`, `pl`) to version numbers.
 - `sp<device><suffix>`: Synced data documents (`SyncDoc`) authored by a device (`lib` for library items, `set` for
-  settings, `pl` for local playlists). Each document holds a list of `LwwEntry` records.
+  settings, `pl` for local playlists, `h0` to `h15` for play segments, `agg` for folded play counts, `t0` to `t15`
+  for the track dictionary). Each document holds a list of `LwwEntry` records.
 
 Each device generates a random 8-character lowercase alphanumeric id stored in `storage.device`.
 
@@ -252,8 +256,10 @@ the counter is missing, after a reset or an account switch, the device starts fr
 never reuses a number another device has cached.
 
 At each refresh, the device reads the registry and each other device's manifest, fetching only the data files whose
-version differs from the one cached in `storage.remote:<device>:<suffix>`. The manifest etag is kept only when
-every changed file arrived, so a failed read is retried at the next refresh.
+version differs from the one cached in `storage.remote:<device>:<suffix>`. Each file that arrives is stored at once.
+The manifest etag is kept only when every changed file was stored, so the next refresh fetches the rest. A pull
+applies a kind only when one of its files was stored since the process last applied it, or the account or the
+device list changed.
 
 ### Device registry compare-and-swap
 
@@ -276,10 +282,11 @@ moved, so a change made during the upload stays marked for the next push.
 ### Local playlists and the size cap
 
 A playlist change records its id and time in `storage.pl.touched`. The entry is built from the stored playlist at
-push time, and a pull never overwrites a touched playlist. A cover image over 16,384 characters is sent as an empty
-string, and a device that receives an empty image keeps its own. A pulled playlist is added to the library list,
-and a pulled delete removes it. Ids with the local `piped-` prefix stay out of the library kind, so only the
-playlist kind decides whether a local playlist is listed.
+push time. A pull overwrites a touched playlist only with another device's newer edit, which would win once the
+touch is pushed. A cover image over 16,384 characters is sent as an empty string, and a device that receives an
+empty image keeps its own. A pulled playlist is added to the library list, and a pulled delete removes it. Ids with
+the local `piped-` prefix stay out of the library kind, so only the playlist kind decides whether a local playlist
+is listed.
 
 A file holds at most 500,000 bytes (`MAX_FILE_BYTES`; the backend allows 512,000). `fitToCap` drops the oldest
 removals first. When the live entries alone do not fit, the file is not sent and its kind stays marked.
@@ -292,8 +299,42 @@ snapshot to the local library, so items saved on other devices through the mirro
 other devices' winning entries.
 
 The account refresh skips the three mirror playlists and their resolution, still caches the account's own
-playlists, and keeps walking and merging the history log. It runs the storage sync before it writes a snapshot
-with empty saved sets, so the import still reads the old ones. A failed storage sync does not stop the refresh.
+playlists, walks and merges the history log once before the history import, and leaves it alone after that. It
+runs the storage sync before it writes a snapshot with empty saved sets, so the import still reads the old ones. A
+failed storage sync does not stop the refresh.
+
+### Plays and the track dictionary
+
+A scrobbled play the device counted becomes an event `e:<videoId>:<at>` in the open segment. A segment holds 1,000
+events and the ring has 16. `storage.hist.cursor` holds the generation of the open segment, a number that grows by
+one per segment opened. The open segment is `h<generation % 16>`, and each event stores its generation as its value.
+
+Before a segment is reused, its events fold into `c:<videoId>` entries of `agg` as `[count, lastAt]`, and the `w`
+entry of `agg` records the newest generation folded. A pull skips a device's events at or below that device's `w`.
+So a device that holds the new `agg` and an old copy of the emptied segment counts each play once. One that holds
+the old `agg` and the emptied segment undercounts until the new `agg` arrives, and `combinePlays` keeps the higher
+count it showed before. The fold writes `agg`, empties the segment, then moves the cursor. When a write fails, the
+play goes into the open segment and the next play retries the fold, which skips generations `w` already covers.
+`agg` is pushed before the segments and keeps the 5,000 most played folded tracks.
+
+The first sync per account writes the device's `history.tracks` counts into `agg` as `b:<videoId>` entries at
+time 0, after one last merge of the history log. Plays recorded before that import only count locally, since the
+import includes them. When the device's own manifest already lists `agg` or a segment, the device published plays
+for this account before an owner reset, and `history.tracks` holds them. The import then reads those files back
+into `storage.own:` and sets `storage.hist.cursor` to the newest generation of their events, at least one above
+`w`, instead of writing a new baseline that would count them twice. A failed read leaves the import to the next
+refresh.
+
+A pull counts, per track, every device's events above its `w` and folded counts plus the largest baseline of any
+device. Baselines overlap, because the history log already spread plays between devices. The 400 tracks with the
+newest plays, minus those without known metadata, raise `history.tracks` through `combinePlays`: a count or play
+time only grows, so plays counted from audio resolves alone stay.
+
+The dictionary has 16 shards `t0` to `t15`, chosen by the sum of the id's character codes. Saves of tracks, plays
+and the history import queue ids in `storage.dict.pending`. At the next push each queued id adds `t:<videoId>`
+with the cached track and `al:<videoId>` with a found album id. Only changed shards are marked, and a shard keeps
+its newest entries up to 120,000 bytes. A pull fills empty `track:` and `track-album:` keys from other devices'
+entries, each entry once per start.
 
 ### Owner reset and detection
 

@@ -84,8 +84,11 @@ internal class PipedSavedLibrary(
 
     suspend fun rowsFor(uuid: String, minRows: Int = 0): CachedRows = rows.rowsFor(uuid, minRows)
 
-    /** A play the host scrobbled, queued for the account's history log. */
-    suspend fun played(track: MetadataTrack) = historySync.onPlay(track)
+    /** A play the host scrobbled, for storage when it is active and otherwise for the account's history log. */
+    suspend fun played(track: MetadataTrack) {
+        if (sync?.played(track) == true) return
+        historySync.onPlay(track)
+    }
 
     suspend fun save(kind: SavedKind, ids: List<String>) {
         if (sync?.librarySaved(kind, ids, saved = true) == true) return
