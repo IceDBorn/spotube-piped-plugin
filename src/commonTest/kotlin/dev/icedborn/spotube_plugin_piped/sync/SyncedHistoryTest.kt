@@ -116,6 +116,26 @@ class SyncedHistoryTest {
     }
 
     @Test
+    fun `a failed push of the counts holds back the emptied segment`() = runTest {
+        val piped = FakePiped()
+        val a = device(piped, "aaaa0001", segmentEvents = 2, segmentCount = 3)
+        val b = device(piped, "bbbb0002", segmentEvents = 2, segmentCount = 3)
+        b.store.rememberTrack(logTrack(1))
+        (1..6).forEach { a.kind.record(vid(1), it * 100_000L) }
+        a.engine.flush(ice)
+        a.kind.record(vid(1), 700_000)
+        piped.override("/storage/stat?file=spaaaa0001agg", body = "{}", times = 1)
+        a.engine.flush(ice)
+
+        b.engine.pull(ice)
+        assertEquals(6, b.history.all().single().plays)
+
+        a.engine.flush(ice)
+        b.engine.pull(ice)
+        assertEquals(7, b.history.all().single().plays)
+    }
+
+    @Test
     fun `restored files go on above the watermark, so the next play counts`() = runTest {
         val piped = FakePiped()
         val a = device(piped, "aaaa0001", segmentEvents = 2, segmentCount = 3)

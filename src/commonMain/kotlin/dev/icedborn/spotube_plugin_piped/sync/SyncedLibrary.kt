@@ -7,7 +7,7 @@ import kotlinx.serialization.json.JsonPrimitive
 
 private val SAVED = JsonPrimitive(1)
 
-private fun isLocalPlaylist(id: String) = id.startsWith(LOCAL_PLAYLIST_PREFIX)
+internal fun isLocalPlaylist(id: String) = id.startsWith(LOCAL_PLAYLIST_PREFIX)
 
 internal fun libraryKey(kind: SavedKind, id: String): String = when (kind) {
     SavedKind.TRACK -> "t:$id"

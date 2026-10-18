@@ -94,6 +94,9 @@ internal interface SyncKind {
     /** Every file of the kind, each pushed and pulled on its own. Most kinds have one. */
     val files: List<LwwStore> get() = listOf(own)
 
+    /** True when the other files rely on the first, so a failed put of the first holds them back. */
+    val firstHoldsBack: Boolean get() = false
+
     suspend fun beforeFlush() {}
 
     /** Applies the merged winners of every device to the local state. */

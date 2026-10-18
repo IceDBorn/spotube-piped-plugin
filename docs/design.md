@@ -97,7 +97,7 @@ latches.
 | `piped.library` | Saved track, album, artist and playlist ids of the profile |
 | `piped.playlists` | Locally created playlists with their track ids |
 | `history.tracks` | Play history that Home and endless playback read, the last 200 tracks |
-| `history.plays` | Every counted play on this device as `[videoId, at]`, newest first, the last 5,000. Home's personal rows read it when storage is off |
+| `history.plays` | Every counted play on this device as `[videoId, at]`, newest first, the last 5,000. Home's personal rows read it |
 | `taste.skips` | Skipped songs on this device as `[videoId, artist, at]`, newest first, the last 500 within 30 days |
 | `radio.stations` | The last 3 endless playback stations, each with its returned songs, pool and skips |
 
@@ -163,6 +163,7 @@ so switching accounts never writes into the previous account's playlists.
 | `storage.imported` | Account stamp of the finished import |
 | `storage.pl.touched` | Local playlists changed since the last push, with times |
 | `storage.hist.cursor` | Generation of the open play segment |
+| `storage.hist.pending` | Plays made before the history import finished, with times, at most 300 |
 | `storage.dict.pending` | Track ids waiting for the dictionary |
 | `storage.imported.history` | Account stamp of the finished history import |
 | `storage.imported.taste` | Account stamp of the finished skip import |
@@ -282,6 +283,10 @@ The first sync of an account imports the local library, the snapshot's saved set
 local playlist with `at = 0`, so any later change on any device wins over them. `storage.imported` records the
 account stamp. Imported settings never override another device; only a change made in Settings (`at > 0`) does.
 
+With the switch off after that import, saves, unsaves, playlist edits and setting changes are still recorded and
+marked with their own times, next to the playlist path. Nothing is pushed until the switch is back on, and the next
+push sends them. Plays made with the switch off reach other devices only through the history log.
+
 ### Manifest and versions
 
 `storage.versions` holds a counter per kind, raised after each confirmed push and published in `sp<device>m`. When
@@ -310,16 +315,19 @@ earlier put landed late, so the device stats once more and retries once.
 
 A change marks its kind in `storage.dirty` and schedules a push 30 seconds later. Each mark also bumps an in-memory
 counter for the kind. A push reads the counter before it uploads and clears the mark only when the counter has not
-moved, so a change made during the upload stays marked for the next push.
+moved, so a change made during the upload stays marked for the next push. That change also schedules another push
+30 seconds after the running one ends.
 
 ### Local playlists and the size cap
 
 A playlist change records its id and time in `storage.pl.touched`. The entry is built from the stored playlist at
-push time. A pull overwrites a touched playlist only with another device's newer edit, which would win once the
-touch is pushed. A cover image over 16,384 characters is sent as an empty string, and a device that receives an
-empty image keeps its own. A pulled playlist is added to the library list, and a pulled delete removes it. Ids with
-the local `piped-` prefix stay out of the library kind, so only the playlist kind decides whether a local playlist
-is listed.
+push time. When that write fails the touches stay, and the next push builds the entry again. A pull overwrites a
+touched playlist only with another device's newer edit, which would win once the touch is pushed. A cover image over
+16,384 characters is sent as an empty string, and a device that receives an empty image keeps its own.
+
+Ids with the local `piped-` prefix stay out of the library kind. Each entry carries `listed`, whether the playlist
+is in the library list, and adding or removing it there touches the playlist. A pull lists or unlists the playlist
+to match, and an entry without `listed` reads as listed. A pulled delete removes the playlist and its listing.
 
 A file holds at most 500,000 bytes (`MAX_FILE_BYTES`; the backend allows 512,000). `fitToCap` drops the oldest
 removals first. When the live entries alone do not fit, the file is not sent and its kind stays marked.
@@ -348,15 +356,18 @@ So a device that holds the new `agg` and an old copy of the emptied segment coun
 the old `agg` and the emptied segment undercounts until the new `agg` arrives, and `combinePlays` keeps the higher
 count it showed before. The fold writes `agg`, empties the segment, then moves the cursor. When a write fails, the
 play goes into the open segment and the next play retries the fold, which skips generations `w` already covers.
-`agg` is pushed before the segments and keeps the 5,000 most played folded tracks.
+`agg` is pushed before the segments and keeps the 5,000 most played folded tracks. When its put fails, the flush
+sends none of the segments, so other devices never get an emptied segment without the counts folded from it.
 
 The first sync per account writes the device's `history.tracks` counts into `agg` as `b:<videoId>` entries at
-time 0, after one last merge of the history log. Plays recorded before that import only count locally, since the
-import includes them. When the device's own manifest already lists `agg` or a segment, the device published plays
-for this account before its sync state was dropped, for example by a reinstall or the schema 4 migration, and
-`history.tracks` holds them. The import then reads those files back into `storage.own:` and sets
+time 0, after one last merge of the history log. Plays recorded before that import wait in `storage.hist.pending`,
+since the import may not include them. When the device's own manifest already lists `agg` or a segment, the device
+published plays for this account before its sync state was dropped, for example by a reinstall or the schema 4
+migration, and `history.tracks` holds them. The import then reads those files back into `storage.own:` and sets
 `storage.hist.cursor` to the newest generation of their events, at least one above `w`, instead of writing a new
-baseline that would count them twice. A failed read leaves the import to the next refresh.
+baseline that would count them twice. The restored files lack the waiting plays, so the import records them as
+events with their own times. A new baseline already counts them, so it drops them instead. A failed read leaves the
+import and the waiting plays to the next refresh.
 
 A pull counts, per track, every device's events above its `w` and folded counts plus the largest baseline of any
 device. Baselines overlap, because the history log already spread plays between devices. The 400 tracks with the
@@ -378,8 +389,9 @@ keeps the previous verdict. The verdict in `storage.support` counts only for its
 ## Personal Home rows
 
 For you shows On repeat, Forgotten favorites, a time-of-day mix and Daily mix 1 to 3. With storage active they read
-the play events of every device of the account from the store, and the folded counts for totals. Otherwise they
-read `history.plays`. `PlaySource` picks the source at each build.
+the play events of the account's other devices from the store, and the folded counts for totals. This device's
+plays come from `history.plays`, which also holds those from before the import, plus its own events older than the
+log. Otherwise they read only `history.plays`. `PlaySource` picks the source at each build.
 
 - On repeat: plays of the last 30 days by count, at least 2 each.
 - Forgotten favorites: tracks with 5 plays or more and none in the last 60 days.

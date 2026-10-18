@@ -2,15 +2,18 @@ package dev.icedborn.spotube_plugin_piped.sync
 
 import dev.icedborn.spotube_plugin_piped.client.json
 import dev.icedborn.spotube_plugin_piped.store.EntityStore
+import dev.icedborn.spotube_plugin_piped.store.HISTORY_PENDING_LIMIT
 import dev.icedborn.spotube_plugin_piped.store.PlayHistory
 import dev.icedborn.spotube_plugin_piped.store.PlayedTrack
 import dev.krtirtho.plugin_interfaces.extras.logger.Logger
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonPrimitive
 
 private const val CURSOR_KEY = "storage.hist.cursor"
+private const val HELD_KEY = "storage.hist.pending"
 
 /** Tracks the rebuild looks up, newest first. Older ones still count, but `history.tracks` keeps only 200. */
 private const val REBUILD_SCAN = 400
@@ -19,6 +22,11 @@ private val historyLog = Logger("PipedSyncHistory")
 /** The open segment's generation. It grows by one per segment opened, and the open one is `h<gen % count>`. */
 @Serializable
 private data class HistoryCursor(val gen: Long = 0)
+
+@Serializable
+private data class HeldPlay(val id: String, val at: Long)
+
+private val heldSerializer = ListSerializer(HeldPlay.serializer())
 
 /** Scrobbled plays as events in a ring of segment files, with the counts of overwritten segments and the import
  * baseline in `agg`. */
@@ -33,8 +41,10 @@ internal class SyncedHistory(
     override val own = LwwStore(store, AGG_SUFFIX)
     override val suffix: String get() = own.suffix
 
-    // `agg` goes out first, so a failed segment put leaves other devices a watermark that hides the folded events.
+    // `agg` goes out first. A failed segment put leaves a watermark that hides the folded events, and a failed `agg`
+    // put holds the emptied segments back.
     override val files: List<LwwStore> get() = listOf(own) + segments
+    override val firstHoldsBack: Boolean get() = true
     private val lock = Mutex()
 
     private fun segmentOf(gen: Long) = segments[(gen % segments.size).toInt()]
@@ -42,6 +52,22 @@ internal class SyncedHistory(
     suspend fun record(videoId: String, at: Long) {
         val touched = lock.withLock { recordLocked(videoId, at) }
         touched.forEach { marks.mark(it) }
+    }
+
+    /** Keeps a play made before the history import finished, for [releaseHeld]. */
+    suspend fun hold(videoId: String, at: Long) = lock.withLock {
+        val held = store.getDecoded(HELD_KEY, heldSerializer).orEmpty() + HeldPlay(videoId, at)
+        store.put(HELD_KEY, json.encodeToJsonElement(heldSerializer, held.takeLast(HISTORY_PENDING_LIMIT)))
+    }
+
+    /** Records the held plays with their times. With [count] false they are dropped, as a new baseline holds them. */
+    suspend fun releaseHeld(count: Boolean) {
+        val held = lock.withLock {
+            val current = store.getDecoded(HELD_KEY, heldSerializer).orEmpty()
+            if (current.isNotEmpty()) store.remove(HELD_KEY)
+            current
+        }
+        if (count) held.forEach { record(it.id, it.at) }
     }
 
     private suspend fun recordLocked(videoId: String, at: Long): List<String> {

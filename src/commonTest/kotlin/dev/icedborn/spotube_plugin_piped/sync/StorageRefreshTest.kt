@@ -1,5 +1,6 @@
 package dev.icedborn.spotube_plugin_piped.sync
 
+import dev.icedborn.spotube_plugin_piped.core.dropSyncState
 import dev.icedborn.spotube_plugin_piped.fakes.FakePiped
 import dev.icedborn.spotube_plugin_piped.fakes.vid
 import dev.icedborn.spotube_plugin_piped.store.AccountHarness
@@ -131,6 +132,50 @@ class StorageRefreshTest {
 
         assertEquals(setOf("ice/spaaaa0001h0", "ice/spaaaa0001m"), second)
         assertEquals(4, piped.count("/storage/"))
+    }
+
+    @Test
+    fun `a play while the history import fails reaches the other device once the import runs`() = runTest {
+        val piped = FakePiped(pageSize = 100)
+        val a = AccountHarness(backgroundScope, piped, storageSync = true)
+        val b = AccountHarness(backgroundScope, piped, storageSync = true)
+        listOf(a to "aaaa0001", b to "bbbb0002").forEach { (h, id) ->
+            h.signIn()
+            h.device(id)
+            refresh(h)
+        }
+        play(a, 1)
+        refresh(a)
+        a.store.dropSyncState()
+        piped.override("/storage/get?file=spaaaa0001h0", body = "{}", times = 1)
+        refresh(a)
+        a.clock += 1_000
+
+        play(a, 2)
+        refresh(a)
+        refresh(b)
+
+        val plays = b.history.all().associate { it.track.id to it.plays }
+        assertEquals(mapOf(vid(1) to 1, vid(2) to 1), plays)
+    }
+
+    @Test
+    fun `a save made while a scheduled push runs gets a push of its own`() = runTest {
+        val piped = FakePiped(pageSize = 100)
+        val h = AccountHarness(backgroundScope, piped, storageSync = true)
+        h.signIn()
+        h.device("aaaa0001")
+        refresh(h)
+        piped.latencyMs = 1_000
+        h.mirror.save(SavedKind.TRACK, listOf(vid(1)))
+        testScheduler.advanceTimeBy(FLUSH_DELAY_MS + 500)
+
+        h.mirror.save(SavedKind.TRACK, listOf(vid(2)))
+        testScheduler.advanceTimeBy(FLUSH_DELAY_MS * 3)
+
+        val doc = decodeSyncDoc(piped.files.getValue("ice/spaaaa0001lib").first)!!
+        assertTrue(doc.entries.any { it.key == "t:${vid(1)}" })
+        assertTrue(doc.entries.any { it.key == "t:${vid(2)}" })
     }
 
     /** The storage files a scheduled push after [action] wrote. */

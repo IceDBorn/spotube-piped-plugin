@@ -80,6 +80,31 @@ class SyncedLibraryTest {
     }
 
     @Test
+    fun `changes made with storage off go out once it is back on`() = runTest {
+        val piped = FakePiped()
+        val a = AccountHarness(backgroundScope, piped, storageSync = true).ready("aaaa0001")
+        val b = AccountHarness(backgroundScope, piped, storageSync = true).ready("bbbb0002")
+        a.library.saveTracks(listOf(vid(1), vid(2)))
+        a.mirror.save(SavedKind.TRACK, listOf(vid(1), vid(2)))
+        a.sync!!.sync(a.session.load()!!, null)
+        b.sync!!.sync(b.session.load()!!, null)
+        a.sync.setting.set(false)
+        a.emptyMirrors()
+        a.clock += 60_000
+        a.library.saveTracks(listOf(vid(3)))
+        a.mirror.save(SavedKind.TRACK, listOf(vid(3)))
+        a.library.removeTracks(listOf(vid(1)))
+        a.mirror.remove(SavedKind.TRACK, listOf(vid(1)))
+
+        a.sync.setting.set(true)
+        a.sync.sync(a.session.load()!!, null)
+        b.sync!!.sync(b.session.load()!!, null)
+
+        assertEquals(setOf(vid(2), vid(3)), b.library.savedTracks().toSet())
+        assertEquals(1, piped.count("/user/playlists/add"))
+    }
+
+    @Test
     fun `with storage off a save takes the mirror path`() = runTest {
         val h = AccountHarness(backgroundScope, storageSync = true).ready("aaaa0001")
         h.sync!!.setting.set(false)

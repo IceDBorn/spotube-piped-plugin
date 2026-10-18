@@ -103,8 +103,12 @@ internal class SyncEngine(
         val loadedVersions = loadVersions() ?: publishedVersions(account, self) ?: return
         val versions = loadedVersions.toMutableMap()
         val dirtySuffixes = marks.all().toSet()
-        for (storeFile in files) {
-            if (storeFile.suffix in dirtySuffixes) pushFile(account, self, storeFile, versions)
+        for (kind in kinds) {
+            for ((index, storeFile) in kind.files.withIndex()) {
+                if (storeFile.suffix !in dirtySuffixes) continue
+                val sent = pushFile(account, self, storeFile, versions)
+                if (!sent && index == 0 && kind.firstHoldsBack) break
+            }
         }
         val dirtyElem = store.get(MANIFEST_DIRTY_KEY)
         if ((dirtyElem as? JsonPrimitive)?.booleanOrNull != true) return
@@ -114,24 +118,25 @@ internal class SyncEngine(
         if (manifestOk) store.remove(MANIFEST_DIRTY_KEY)
     }
 
-    /** A file over the size cap is skipped and stays marked, like one whose put failed. */
-    private suspend fun pushFile(account: PipedAccount, self: String, storeFile: LwwStore, versions: MutableMap<String, Int>) {
+    /** A file over the size cap is skipped and stays marked, like one whose put failed. False only when the put failed. */
+    private suspend fun pushFile(account: PipedAccount, self: String, storeFile: LwwStore, versions: MutableMap<String, Int>): Boolean {
         val suffix = storeFile.suffix
         val generation = marks.generation(suffix)
         val entries = storeFile.entries()
         val doc = fitToCap(SyncDoc(device = self, entries = entries))
         if (doc == null) {
             syncLog.w { "storage file $suffix is over the size cap, not sent" }
-            return
+            return true
         }
         val encodedDoc = encodeDoc(doc)
         val putOk = putOwn(account, dataFile(self, suffix), encodedDoc)
-        if (!putOk) return
+        if (!putOk) return false
         versions[suffix] = (versions[suffix] ?: 0) + 1
         val versionsJson = json.encodeToJsonElement(versionsSerializer, versions)
         store.put(VERSIONS_KEY, versionsJson)
         store.put(MANIFEST_DIRTY_KEY, JsonPrimitive(true))
         marks.clear(suffix, generation)
+        return true
     }
 
     /** Only this device writes its files, so a conflict means an earlier put landed late. One fresh stat settles it. */

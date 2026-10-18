@@ -16,6 +16,7 @@ import dev.icedborn.spotube_plugin_piped.store.SavedKind
 import dev.icedborn.spotube_plugin_piped.store.Skip
 import dev.icedborn.spotube_plugin_piped.store.SkipLog
 import dev.icedborn.spotube_plugin_piped.store.orNull
+import dev.krtirtho.plugin_interfaces.extras.logger.Logger
 import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlinx.coroutines.CoroutineScope
@@ -29,6 +30,7 @@ import kotlin.random.Random
 private const val IMPORTED_KEY = "storage.imported"
 private const val HISTORY_IMPORTED_KEY = "storage.imported.history"
 private const val TASTE_IMPORTED_KEY = "storage.imported.taste"
+private val storageLog = Logger("PipedStorageSync")
 
 /** Storage sync for the signed-in account: the switch, detection, the kinds and the engine. */
 internal class StorageSync(
@@ -51,7 +53,7 @@ internal class StorageSync(
     private val marks = DirtyMarks(store)
     val libraryKind = SyncedLibrary(LwwStore(store, "lib"), library)
     val settingsKind = SyncedSettings(LwwStore(store, "set"), region, libraryPlaylist)
-    val playlistsKind = SyncedPlaylists(LwwStore(store, "pl"), store, library)
+    val playlistsKind = SyncedPlaylists(LwwStore(store, "pl"), store, library, marks)
     val dictionary = SyncedDictionary(store, marks, now)
     val historyKind = SyncedHistory(store, history, marks)
     val tasteKind = SyncedTaste(LwwStore(store, TASTE_SUFFIX), now)
@@ -60,6 +62,7 @@ internal class StorageSync(
     private val kinds: List<SyncKind> = listOf(libraryKind, settingsKind, playlistsKind, dictionary, historyKind, tasteKind)
     private val engine = SyncEngine(http, store, owner, marks, kinds, now)
     private var flushJob: Job? = null
+    private var markedDuringFlush = false
 
     init {
         marks.onMark = { scheduleFlush() }
@@ -68,6 +71,15 @@ internal class StorageSync(
     suspend fun activeAccount(): PipedAccount? {
         val account = sessionProvider() ?: return null
         return account.takeIf { mode.active(it) }
+    }
+
+    /** The account whose changes go into storage. With the switch off after an earlier import they are recorded too,
+     * and go out once it is back on. */
+    private suspend fun recordingAccount(): PipedAccount? {
+        val account = sessionProvider() ?: return null
+        if (mode.active(account)) return account
+        val imported = store.forAccount(account) { store.get(IMPORTED_KEY) }
+        return account.takeIf { (imported as? JsonPrimitive)?.contentOrNull == accountStamp(account) }
     }
 
     suspend fun prepare(account: PipedAccount): Boolean {
@@ -84,28 +96,30 @@ internal class StorageSync(
         engine.flush(account)
     }
 
-    /** Records saves or unsaves when storage is active. False means the caller takes the playlist path. */
+    /** Records saves or unsaves for storage. False means storage is off and the caller takes the playlist path too. */
     suspend fun librarySaved(kind: SavedKind, ids: List<String>, saved: Boolean): Boolean {
-        val account = activeAccount() ?: return false
+        val account = recordingAccount() ?: return false
         store.forAccount(account) {
             libraryKind.record(kind, ids, saved, now())
             if (saved && kind == SavedKind.TRACK) dictionary.note(ids)
             marks.mark(libraryKind.suffix)
         }
-        return true
+        return mode.active(account)
     }
 
     suspend fun savedPlaylistsChanged(ids: List<String>, saved: Boolean) {
-        val account = activeAccount() ?: return
+        val account = recordingAccount() ?: return
         store.forAccount(account) {
             libraryKind.recordPlaylists(ids, saved, now())
             marks.mark(libraryKind.suffix)
+            val touchedLocal = playlistsKind.touchListing(ids, now())
+            if (touchedLocal) marks.mark(playlistsKind.suffix)
         }
     }
 
     suspend fun settingChanged(key: String) {
         if (key !in SYNCED_SETTING_KEYS) return
-        val account = activeAccount() ?: return
+        val account = recordingAccount() ?: return
         store.forAccount(account) {
             settingsKind.record(key, now())
             marks.mark(settingsKind.suffix)
@@ -113,23 +127,24 @@ internal class StorageSync(
     }
 
     suspend fun playlistTouched(localId: String): Boolean {
-        val account = activeAccount() ?: return false
+        val account = recordingAccount() ?: return false
         store.forAccount(account) {
             playlistsKind.touch(localId, now())
             marks.mark(playlistsKind.suffix)
         }
-        return true
+        return mode.active(account)
     }
 
     /** Records a scrobbled play when storage is active. False means the caller takes the history log path. */
     suspend fun played(track: MetadataTrack): Boolean {
         val account = activeAccount() ?: return false
-        // Before the import, the play is in the local counts the import turns into the baseline.
-        if (!YOUTUBE_VIDEO_ID.matches(track.id) || !historyImported(account)) return true
+        if (!YOUTUBE_VIDEO_ID.matches(track.id)) return true
+        val imported = historyImported(account)
         store.forAccount(account) {
             store.rememberTrack(track)
             dictionary.note(listOf(track.id))
-            historyKind.record(track.id, now())
+            // The import either turns the local counts into the baseline or restores files without this play.
+            if (imported) historyKind.record(track.id, now()) else historyKind.hold(track.id, now())
         }
         return true
     }
@@ -137,6 +152,8 @@ internal class StorageSync(
     suspend fun historyImported(account: PipedAccount): Boolean = store.forAccount(account) {
         (store.get(HISTORY_IMPORTED_KEY) as? JsonPrimitive)?.contentOrNull == accountStamp(account)
     }
+
+    suspend fun device(): String = owner.device()
 
     /** The synced plays of every device of the active account. Empty when storage is not active. */
     suspend fun historyDocs(): List<SyncDoc> {
@@ -178,18 +195,30 @@ internal class StorageSync(
     /** The local counts become this device's baseline, and the tracks behind them go into the dictionary. A device
      * that published plays for the account before gets its own files back instead, since the local counts hold them. */
     private suspend fun importHistoryOnce(account: PipedAccount) {
-        if (historyImported(account)) return
-        val published = engine.publishedOwn(account, historyKind.files.map { it.suffix }) ?: return
+        // A play held while an earlier import was finishing is counted at the next refresh.
+        if (historyImported(account)) {
+            historyKind.releaseHeld(count = true)
+            return
+        }
+        val published = engine.publishedOwn(account, historyKind.files.map { it.suffix })
+        if (published == null) {
+            storageLog.w { "own history files could not be read, the import waits for the next refresh" }
+            return
+        }
         if (published.isNotEmpty()) {
             val restored = historyKind.restore(published)
-            if (!restored) return
+            if (!restored) {
+                storageLog.w { "own history files could not be restored, the import waits for the next refresh" }
+                return
+            }
         }
         val local = history.all()
         store.rememberTracks(local.map { it.track })
         val saved = library.savedTracks()
         dictionary.note(local.map { it.track.id } + saved)
         if (published.isEmpty()) historyKind.importBaseline()
-        store.put(HISTORY_IMPORTED_KEY, JsonPrimitive(accountStamp(account)))
+        val stamped = store.put(HISTORY_IMPORTED_KEY, JsonPrimitive(accountStamp(account)))
+        if (stamped) historyKind.releaseHeld(count = published.isNotEmpty())
     }
 
     /** Copies this profile's skips into the own taste file once per account, so other devices see them too. */
@@ -206,11 +235,21 @@ internal class StorageSync(
     }
 
     private fun scheduleFlush() {
-        if (flushJob?.isActive == true) return
+        if (flushJob?.isActive == true) {
+            markedDuringFlush = true
+            return
+        }
         flushJob = scope.launch {
-            delay(FLUSH_DELAY_MS)
-            val account = activeAccount() ?: return@launch
-            store.forAccount(account) { orNull("storage flush") { engine.flush(account) } }
+            do {
+                markedDuringFlush = false
+                delay(FLUSH_DELAY_MS)
+                val account = activeAccount() ?: return@launch
+                val left = store.forAccount(account) {
+                    orNull("storage flush") { engine.flush(account) }
+                    marks.all().isNotEmpty()
+                }
+                // A mark during the delay is pushed by this flush. One during the uploads stays, and gets another flush.
+            } while (markedDuringFlush && left)
         }
     }
 }

@@ -35,6 +35,17 @@ class PlayLogTest {
     }
 
     @Test
+    fun `a bad row is dropped and the other plays stay`() = runTest {
+        val storage = FakeStorage()
+        storage.values[PLAYS_KEY] = "[[\"${vid(1)}\",1],[\"${vid(2)}\"],[\"${vid(3)}\",3]]"
+        val log = PlayLog(EntityStore(storage))
+
+        log.append(vid(4), 4)
+
+        assertEquals(listOf(vid(4), vid(1), vid(3)), log.all().map { it.id })
+    }
+
+    @Test
     fun `a corrupt log reads as empty and the next play replaces it`() = runTest {
         val storage = FakeStorage()
         storage.values[PLAYS_KEY] = "{\"not\":\"a list\"}"

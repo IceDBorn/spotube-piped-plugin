@@ -2,6 +2,8 @@ package dev.icedborn.spotube_plugin_piped.sync
 
 import dev.icedborn.spotube_plugin_piped.fakes.FakePiped
 import dev.icedborn.spotube_plugin_piped.fakes.vid
+import dev.icedborn.spotube_plugin_piped.metadata.RealMetadataPlaylistAPI
+import dev.icedborn.spotube_plugin_piped.settings.LibraryPlaylistSetting
 import dev.icedborn.spotube_plugin_piped.store.AccountHarness
 import dev.icedborn.spotube_plugin_piped.store.StoredPlaylist
 import kotlinx.coroutines.test.runTest
@@ -104,6 +106,64 @@ class SyncedPlaylistsTest {
         b.sync!!.sync(b.session.load()!!, null)
 
         assertEquals("From A", b.library.storedPlaylist("piped-p")?.name)
+    }
+
+    @Test
+    fun `an edit whose record fails is pushed by a later flush`() = runTest {
+        val piped = FakePiped()
+        val a = AccountHarness(backgroundScope, piped, storageSync = true)
+        val b = AccountHarness(backgroundScope, piped, storageSync = true)
+        pair(piped, a, b)
+        a.sync!!.sync(a.session.load()!!, null)
+        a.library.upsertPlaylist(StoredPlaylist(id = "piped-p", name = "Road"))
+        a.mirror.mirrorCreatePlaylist("piped-p", "Road", emptyList())
+        a.storage.failPutsFor = "storage.own:pl"
+        a.sync!!.sync(a.session.load()!!, null)
+        a.storage.failPutsFor = null
+
+        a.sync!!.sync(a.session.load()!!, null)
+        b.sync!!.sync(b.session.load()!!, null)
+
+        assertEquals("Road", b.library.storedPlaylist("piped-p")?.name)
+    }
+
+    @Test
+    fun `an edit of only the description reaches the other device`() = runTest {
+        val piped = FakePiped()
+        val a = AccountHarness(backgroundScope, piped, storageSync = true)
+        val b = AccountHarness(backgroundScope, piped, storageSync = true)
+        pair(piped, a, b)
+        val api = RealMetadataPlaylistAPI(a.client, a.store, a.library, a.mirror, a.history, LibraryPlaylistSetting(a.store))
+        val created = api.createPlaylist("Road", "Old", true, false, "", listOf(vid(1)))
+        a.sync!!.sync(a.session.load()!!, null)
+        b.sync!!.sync(b.session.load()!!, null)
+        a.clock += 1_000
+
+        api.updatePlaylist(created.id, null, "New", null, null, null, null)
+        a.sync!!.sync(a.session.load()!!, null)
+        b.sync!!.sync(b.session.load()!!, null)
+
+        assertEquals("New", b.library.storedPlaylist(created.id)?.description)
+    }
+
+    @Test
+    fun `a playlist removed from the library stays removed on both devices`() = runTest {
+        val piped = FakePiped()
+        val a = AccountHarness(backgroundScope, piped, storageSync = true)
+        val b = AccountHarness(backgroundScope, piped, storageSync = true)
+        pair(piped, a, b)
+        val api = RealMetadataPlaylistAPI(a.client, a.store, a.library, a.mirror, a.history, LibraryPlaylistSetting(a.store))
+        val created = api.createPlaylist("Road", null, true, false, "", listOf(vid(1)))
+        listOf(a, b, a).forEach { it.sync!!.sync(it.session.load()!!, null) }
+        assertTrue(created.id in b.library.savedPlaylists())
+        a.clock += 1_000
+
+        api.removeSavedPlaylists(listOf(created.id))
+        listOf(a, b, a).forEach { it.sync!!.sync(it.session.load()!!, null) }
+
+        assertFalse(created.id in a.library.savedPlaylists())
+        assertFalse(created.id in b.library.savedPlaylists())
+        assertEquals("Road", b.library.storedPlaylist(created.id)?.name)
     }
 
     @Test

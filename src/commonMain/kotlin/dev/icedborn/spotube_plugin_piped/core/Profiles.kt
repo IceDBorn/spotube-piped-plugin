@@ -27,7 +27,7 @@ private val PROFILE_KEYS = setOf(
 internal val SYNC_STATE_PREFIXES = listOf(
     "storage.own:", "storage.dirty", "storage.remote:", "storage.etag:", "storage.registry", "storage.registered",
     "storage.versions", "storage.manifest.dirty", "storage.imported", "storage.pl.touched",
-    "storage.hist.cursor", "storage.dict.pending",
+    "storage.hist.cursor", "storage.hist.pending", "storage.dict.pending",
 )
 
 internal fun isProfileKey(key: String): Boolean = key in PROFILE_KEYS || SYNC_STATE_PREFIXES.any { key.startsWith(it) }

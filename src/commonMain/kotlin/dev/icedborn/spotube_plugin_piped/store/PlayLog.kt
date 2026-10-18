@@ -26,10 +26,9 @@ internal class PlayLog(private val store: EntityStore, private val limit: Int = 
 
     /** False when the write failed. [PlayHistory] calls it under its lock, so two appends never interleave. */
     suspend fun append(id: String, at: Long): Boolean {
-        val newPair = JsonArray(listOf(JsonPrimitive(id), JsonPrimitive(at)))
-        val existing = store.get(PLAYS_KEY) as? JsonArray
-        val validExisting = if (existing != null && existing.all { it is JsonArray && it.size == 2 }) existing else null
-        val encoded = JsonArray((listOf(newPair) + validExisting.orEmpty()).take(limit))
+        // Rows that do not read back are dropped, the way [all] skips them.
+        val plays = (listOf(Play(id, at)) + all()).take(limit)
+        val encoded = JsonArray(plays.map { JsonArray(listOf(JsonPrimitive(it.id), JsonPrimitive(it.at))) })
         return store.put(PLAYS_KEY, encoded)
     }
 }

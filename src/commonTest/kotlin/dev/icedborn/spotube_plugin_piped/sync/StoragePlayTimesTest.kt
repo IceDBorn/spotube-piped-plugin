@@ -1,5 +1,6 @@
 package dev.icedborn.spotube_plugin_piped.sync
 
+import dev.icedborn.spotube_plugin_piped.core.epochMillis
 import dev.icedborn.spotube_plugin_piped.fakes.FakePiped
 import dev.icedborn.spotube_plugin_piped.fakes.vid
 import dev.icedborn.spotube_plugin_piped.store.AccountHarness
@@ -32,6 +33,24 @@ class StoragePlayTimesTest {
         val snapshot = source(b).current().snapshot()
         assertEquals(listOf(vid(1)), snapshot.plays.map { it.id })
         assertEquals(1, snapshot.totals[vid(1)]?.plays)
+    }
+
+    @Test
+    fun `plays from before the import stay, and a synced play counts once`() = runTest {
+        val h = AccountHarness(backgroundScope, FakePiped(pageSize = 100), storageSync = true)
+        h.device("aaaa0001")
+        h.signIn("ice")
+        h.sync!!.setting.set(false)
+        play(h, 1)
+        h.sync.setting.set(true)
+        refresh(h)
+        // The log stamps plays with the real time, so the synced event gets the same clock.
+        h.clock = epochMillis()
+
+        play(h, 2)
+        refresh(h)
+
+        assertEquals(listOf(vid(2), vid(1)), source(h).current().snapshot().plays.map { it.id })
     }
 
     @Test

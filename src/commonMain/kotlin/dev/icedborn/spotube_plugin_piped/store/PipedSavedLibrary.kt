@@ -129,4 +129,9 @@ internal class PipedSavedLibrary(
         sync?.playlistTouched(localId) == true || playlists.rename(localId, name)
 
     suspend fun mirrorDeletePlaylist(localId: String): Boolean = sync?.playlistTouched(localId) == true || playlists.delete(localId)
+
+    /** Marks an edit with no Piped counterpart, such as the description or cover, for storage. */
+    suspend fun touchPlaylist(localId: String) {
+        sync?.playlistTouched(localId)
+    }
 }
