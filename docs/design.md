@@ -98,10 +98,12 @@ latches.
 | `piped.playlists` | Locally created playlists with their track ids |
 | `history.tracks` | Play history that Home and endless playback read, the last 200 tracks |
 | `history.plays` | Every counted play on this device as `[videoId, at]`, newest first, the last 5,000. Home's personal rows read it when storage is off |
+| `taste.skips` | Skipped songs on this device as `[videoId, artist, at]`, newest first, the last 500 within 30 days |
 | `radio.stations` | The last 3 endless playback stations, each with its returned songs, pool and skips |
 
-`piped.library`, `piped.playlists`, `history.tracks`, `history.pending`, `history.seen`, `history.plays` and every
-storage sync key below except `storage.device` and `storage.support` are per profile, see [Profiles](#profiles).
+`piped.library`, `piped.playlists`, `history.tracks`, `history.pending`, `history.seen`, `history.plays`,
+`taste.skips` and every storage sync key below except `storage.device` and `storage.support` are per profile,
+see [Profiles](#profiles).
 
 ### Caches
 
@@ -150,7 +152,7 @@ so switching accounts never writes into the previous account's playlists.
 | `storage.support` | `StorageVerdict` for one account |
 | `storage.device` | This device's id, 8 letters and digits |
 | `profiles.legacy` | Account stamp, or `out`, of the profile that reads the bare keys |
-| `storage.own:<suffix>` | Entries authored here, per suffix (`lib`, `set`, `pl`, `h0`-`h15`, `agg`, `t0`-`t15`) |
+| `storage.own:<suffix>` | Entries authored here, per suffix (`lib`, `set`, `pl`, `h0`-`h15`, `agg`, `t0`-`t15`, `taste`) |
 | `storage.dirty` | Kinds waiting for a push |
 | `storage.versions` | This device's manifest versions |
 | `storage.manifest.dirty` | The manifest still needs a push |
@@ -163,6 +165,7 @@ so switching accounts never writes into the previous account's playlists.
 | `storage.hist.cursor` | Generation of the open play segment |
 | `storage.dict.pending` | Track ids waiting for the dictionary |
 | `storage.imported.history` | Account stamp of the finished history import |
+| `storage.imported.taste` | Account stamp of the finished skip import |
 
 ## Profiles
 
@@ -260,7 +263,7 @@ Storage files belong to the account and use short names:
 - `sp<device>m`: Device manifest (`DeviceManifest`), mapping kind suffixes (`lib`, `set`, `pl`) to version numbers.
 - `sp<device><suffix>`: Synced data documents (`SyncDoc`) authored by a device (`lib` for library items, `set` for
   settings, `pl` for local playlists, `h0` to `h15` for play segments, `agg` for folded play counts, `t0` to `t15`
-  for the track dictionary). Each document holds a list of `LwwEntry` records.
+  for the track dictionary, `taste` for endless playback skips). Each document holds a list of `LwwEntry` records.
 
 Each device generates a random 8-character lowercase alphanumeric id stored in `storage.device`.
 
@@ -557,8 +560,11 @@ the last 200 saved songs.
 A song of the last batch counts as skipped when it was not played after the plugin returned the batch, while a
 later song of that batch was. The host asks for a batch when the last song starts, so the songs before it are over.
 The check reads only the last batch, because the history keeps 200 plays and an older batch could look skipped once
-its plays age out. A skipped song never seeds a mix, and each skip halves the scores of its artist's songs in that
-station.
+its plays age out. A song the station saw skipped never seeds a mix. Each new skip also goes to `taste.skips` and, with
+storage active, to the taste file `sp<dev>taste`, timed at its batch. Every batch reads the skips of every device of the
+account younger than 30 days. A skip weighs `1 - age / 30 days`, and an artist's songs score
+`0.5 ^ (sum of its weights)` in every station. A skipped song is not usable for 30 days, though it still seeds a
+mix when the listener queues it in another station.
 
 With scrobbles off, every audio resolve counts as a play, preloads included, so fewer skips show.
 

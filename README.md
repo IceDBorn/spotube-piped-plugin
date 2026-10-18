@@ -100,11 +100,12 @@ Done on the form opened from Logout keeps the session without a check.
   seed's title has the same tag. Songs rank by how high they sit in the mixes the station has read. An artist gets
   at most 2 songs per batch with 3 songs between them, and only a batch the other artists cannot fill drops that
   rule. Every 4th slot takes a song you liked or played by an artist of the station, if you have not played it
-  in the last 2 days and it is not a music video. A song you skip lowers its artist for the rest of the station,
-  and the station never reads its mix. A batch reads at most 4 mixes, 1 request each. Up to 2 come from seeds the
-  station has not read yet, and up to 2 more from songs by other artists when the batch is still short. The first
-  batch of a radio from one song usually costs 2 requests, and later batches 1 to 3. A seed that looks like a
-  music video adds one song search.
+  in the last 2 days and it is not a music video. A song you skip stays out for 30 days and lowers its artist in
+  every station, on every device with storage sync, by half for a fresh skip and less as it ages. The station never
+  reads its mix. A batch reads at most 4 mixes, 1 request each. Up to 2 come from seeds the station has not read
+  yet, and up to 2 more from songs by other artists when the batch is still short. The first batch of a radio from
+  one song usually costs 2 requests, and later batches 1 to 3. A seed that looks like a music video adds one song
+  search.
   When the mixes cannot fill a batch, the seed artist's songs fill it for one /streams fetch and one song search.
   Home and related artists read the mix as it is.
 - **Home, Charts tab**: YouTube Music charts for your region, read from the playlists of the "YouTube Music Global
@@ -222,6 +223,9 @@ device has not shared before one track details file, 2 more. Plays within the 30
 page, and the device's own manifest, 1 or 2 requests. The push after it sends `agg` and up to 16 track details
 files, 2 requests each. After a reinstall, the device reads the play files it published before, 1 request each,
 instead of sending a new `agg`.
+
+A skip in endless playback costs no request at once. The next push sends the device's taste file and its manifest,
+4 requests, shared with other changes in the same 30 seconds.
 
 [docs/design.md](docs/design.md) lists the storage keys, the index format and the row cache rules.
 

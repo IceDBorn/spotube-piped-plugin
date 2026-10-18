@@ -20,6 +20,7 @@ private val PROFILE_KEYS = setOf(
     "history.pending",
     "history.seen",
     "history.plays",
+    "taste.skips",
 )
 
 /** Keys of one account's storage sync. They live in that account's profile. */

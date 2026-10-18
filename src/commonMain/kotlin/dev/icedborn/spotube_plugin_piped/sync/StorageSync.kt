@@ -13,6 +13,8 @@ import dev.icedborn.spotube_plugin_piped.store.EntityStore
 import dev.icedborn.spotube_plugin_piped.store.LocalLibrary
 import dev.icedborn.spotube_plugin_piped.store.PlayHistory
 import dev.icedborn.spotube_plugin_piped.store.SavedKind
+import dev.icedborn.spotube_plugin_piped.store.Skip
+import dev.icedborn.spotube_plugin_piped.store.SkipLog
 import dev.icedborn.spotube_plugin_piped.store.orNull
 import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
@@ -26,6 +28,7 @@ import kotlin.random.Random
 
 private const val IMPORTED_KEY = "storage.imported"
 private const val HISTORY_IMPORTED_KEY = "storage.imported.history"
+private const val TASTE_IMPORTED_KEY = "storage.imported.taste"
 
 /** Storage sync for the signed-in account: the switch, detection, the kinds and the engine. */
 internal class StorageSync(
@@ -51,9 +54,10 @@ internal class StorageSync(
     val playlistsKind = SyncedPlaylists(LwwStore(store, "pl"), store, library)
     val dictionary = SyncedDictionary(store, marks, now)
     val historyKind = SyncedHistory(store, history, marks)
+    val tasteKind = SyncedTaste(LwwStore(store, TASTE_SUFFIX), now)
 
     // The dictionary comes before the history, so the rebuild finds the metadata the pull just brought.
-    private val kinds: List<SyncKind> = listOf(libraryKind, settingsKind, playlistsKind, dictionary, historyKind)
+    private val kinds: List<SyncKind> = listOf(libraryKind, settingsKind, playlistsKind, dictionary, historyKind, tasteKind)
     private val engine = SyncEngine(http, store, owner, marks, kinds, now)
     private var flushJob: Job? = null
 
@@ -75,6 +79,7 @@ internal class StorageSync(
     suspend fun sync(account: PipedAccount, previous: AccountCacheState?) = store.forAccount(account) {
         importOnce(account, previous)
         importHistoryOnce(account)
+        importTasteOnce(account)
         engine.pull(account)
         engine.flush(account)
     }
@@ -139,6 +144,21 @@ internal class StorageSync(
         return store.forAccount(account) { engine.cachedDocs(historyKind) }
     }
 
+    /** Records skips when storage is active. The caller has already written them to the local log. */
+    suspend fun skipped(skips: List<Skip>) {
+        val account = activeAccount() ?: return
+        store.forAccount(account) {
+            val recorded = tasteKind.record(skips)
+            if (recorded) marks.mark(tasteKind.suffix)
+        }
+    }
+
+    /** The synced skips of every device of the active account. Empty when storage is not active. */
+    suspend fun tasteDocs(): List<SyncDoc> {
+        val account = activeAccount() ?: return emptyList()
+        return store.forAccount(account) { engine.cachedDocs(tasteKind) }
+    }
+
     private suspend fun importOnce(account: PipedAccount, previous: AccountCacheState?) {
         val stamp = accountStamp(account)
         if ((store.get(IMPORTED_KEY) as? JsonPrimitive)?.contentOrNull == stamp) return
@@ -170,6 +190,19 @@ internal class StorageSync(
         dictionary.note(local.map { it.track.id } + saved)
         if (published.isEmpty()) historyKind.importBaseline()
         store.put(HISTORY_IMPORTED_KEY, JsonPrimitive(accountStamp(account)))
+    }
+
+    /** Copies this profile's skips into the own taste file once per account, so other devices see them too. */
+    private suspend fun importTasteOnce(account: PipedAccount) {
+        val stamp = accountStamp(account)
+        if ((store.get(TASTE_IMPORTED_KEY) as? JsonPrimitive)?.contentOrNull == stamp) return
+        val local = SkipLog(store).all()
+        if (local.isNotEmpty()) {
+            val imported = tasteKind.importLocal(local)
+            if (!imported) return
+            marks.mark(tasteKind.suffix)
+        }
+        store.put(TASTE_IMPORTED_KEY, JsonPrimitive(stamp))
     }
 
     private fun scheduleFlush() {

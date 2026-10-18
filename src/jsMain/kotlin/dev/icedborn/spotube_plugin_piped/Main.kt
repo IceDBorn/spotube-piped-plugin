@@ -31,9 +31,11 @@ import dev.icedborn.spotube_plugin_piped.store.LocalPlayTimes
 import dev.icedborn.spotube_plugin_piped.store.PipedSavedLibrary
 import dev.icedborn.spotube_plugin_piped.store.PlayHistory
 import dev.icedborn.spotube_plugin_piped.store.PlayLog
+import dev.icedborn.spotube_plugin_piped.store.SkipLog
 import dev.icedborn.spotube_plugin_piped.store.StorageMigration
 import dev.icedborn.spotube_plugin_piped.sync.PlaySource
 import dev.icedborn.spotube_plugin_piped.sync.StorageSync
+import dev.icedborn.spotube_plugin_piped.sync.Taste
 import dev.krtirtho.plugin_interfaces.core.runPluginInitialized
 import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI
 import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI_SERVICE_NAME
@@ -129,7 +131,7 @@ private suspend fun start() {
         coroutineScope = initScope,
     )
     zipline.bind<CoreAPI>(CoreAPI_SERVICE_NAME, core)
-    val trackApi = RealMetadataTrackAPI(client, store, library, mirror, history)
+    val trackApi = RealMetadataTrackAPI(client, store, library, mirror, history, Taste(SkipLog(store), storageSync))
     val scrobbles = ScrobbleHistory(history, store, fetchTrack = { id -> trackApi.getTrack(id) }, onPlay = { mirror.played(it) })
     val playback = PipedClient(httpClient) { instanceSource.playback() ?: instanceSource.requireApi() }
     zipline.bind<AudioAPI>(
