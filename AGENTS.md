@@ -34,9 +34,10 @@ Main code is in `src/commonMain/kotlin/dev/icedborn/spotube_plugin_piped/`:
 
 | Package | Contents |
 | --- | --- |
-| `core` | `RealCoreAPI` (login, settings form, logout), account session, instance source, update checker |
+| `core` | `RealCoreAPI` (login, settings form, logout), account session, profiles, instance source, update checker |
 | `client` | `PipedClient`, `AccountHttp`, the Piped models and the converters to Spotube types |
-| `store` | `EntityStore`, local library, play history and its sync, `RowCache`, account sync, `StorageMigration` |
+| `store` | `EntityStore`, local library, play history, the play and skip logs, `RowCache`, account sync, `StorageMigration` |
+| `sync` | `StorageSync` facade, detection and switch, `SyncEngine`, the library, settings, playlist and taste kinds |
 | `metadata` | The metadata APIs, `AlbumLookup`, charts, related artists, endless playback |
 | `audio` | `RealPipedAudioAPI` and stream selection |
 | `scrobble` | The scrobble role |
@@ -46,9 +47,12 @@ The account sync in `store` is split into `PipedSavedLibrary` (the facade the AP
 and refresh), `MirrorWriter` and `MirrorRemoval` (save and unsave), `PlaylistMirror` (copies of local playlists),
 `SavedSetResolver` (maps mirror rows back to albums and artists), `SavedBindings` and `HistorySync` (uploads
 scrobbled plays to the history log and merges the plays of other devices, with its pure rules in `HistoryLog.kt`).
+With storage active, `AccountCache` skips the mirrors and `StorageSync` carries the saved sets, settings, local
+playlists and, after its import, the plays.
 
-`src/jsMain/.../Main.kt` takes the host services from Zipline, runs `StorageMigration` before any role is bound,
-binds the roles, then starts the account refresh when a session is stored.
+`src/jsMain/.../Main.kt` takes the host services from Zipline, installs `Profiles` on the store, runs
+`StorageMigration` before any role is bound, binds the roles, then starts the account refresh when a session is
+stored.
 `core/Time.kt` has one implementation per platform.
 
 Tests mirror the package layout under `src/commonTest/`. The fakes in `fakes/`:
@@ -96,5 +100,5 @@ rules, request costs and limits.
 
 Conventional commits, lowercase and imperative: `fix(audio): pick the muxed row by itag 18`. Types in use are
 `feat`, `fix`, `docs`, `test`, `refactor` and `bump`. Scopes follow the packages (`audio`, `core`, `client`,
-`store`, `metadata`, `settings`, `scrobble`) plus `ci` and `readme`. A version bump is
+`store`, `metadata`, `settings`, `scrobble`, `sync`) plus `ci` and `readme`. A version bump is
 `bump(version): 0.0.4 -> 0.0.5`.

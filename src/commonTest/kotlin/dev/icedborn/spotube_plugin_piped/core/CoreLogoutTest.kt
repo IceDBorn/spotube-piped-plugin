@@ -8,6 +8,7 @@ import dev.icedborn.spotube_plugin_piped.settings.LibraryPlaylistSetting
 import dev.icedborn.spotube_plugin_piped.settings.REGION_GLOBAL
 import dev.icedborn.spotube_plugin_piped.settings.RegionSetting
 import dev.icedborn.spotube_plugin_piped.store.EntityStore
+import dev.icedborn.spotube_plugin_piped.sync.StorageSyncSetting
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -42,6 +43,7 @@ private class Harness {
         instanceSource = instanceSource,
         region = RegionSetting(store, null),
         libraryPlaylist = LibraryPlaylistSetting(store),
+        storageSetting = StorageSyncSetting(store),
         coroutineScope = scope,
     )
 
@@ -259,5 +261,42 @@ class CoreLogoutTest {
         assertNotNull(h.session.load())
         assertTrue(core.loggedInFlow.value)
         assertEquals(1, h.webView.exitCount)
+    }
+
+    @Test
+    fun `a storage switch change is stored`() = withCore { h, core ->
+        val logout = logoutInBackground(core)
+        val nonce = awaitForm(h.webView)
+        h.webView.post("""{"action":"storage","enabled":false,"nonce":"$nonce"}""")
+        step()
+        h.webView.post(nonce, "close")
+        finish(logout)
+        assertFalse(StorageSyncSetting(h.store).enabled())
+    }
+
+    @Test
+    fun `a region change reports its key`() = runTest {
+        val h = Harness()
+        h.saveSession()
+        val saved = mutableListOf<String>()
+        val core = RealCoreAPI(
+            httpClient = h.http,
+            storage = h.storage,
+            webView = h.webView,
+            session = h.session,
+            instanceSource = h.instanceSource,
+            region = RegionSetting(h.store, null),
+            onSettingSaved = { saved += it },
+            coroutineScope = CoroutineScope(coroutineContext),
+        )
+        advanceTimeBy(FORM_GRACE_MS)
+        runCurrent()
+        val logout = logoutInBackground(core)
+        val nonce = awaitForm(h.webView)
+        h.webView.post("""{"action":"region","region":"$REGION_GLOBAL","nonce":"$nonce"}""")
+        step()
+        h.webView.post(nonce, "close")
+        finish(logout)
+        assertEquals(listOf("piped.region"), saved)
     }
 }

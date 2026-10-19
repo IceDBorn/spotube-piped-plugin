@@ -36,9 +36,24 @@ internal fun mergeRemotePlays(local: List<PlayedTrack>, remote: List<MetadataTra
     return merged.take(HISTORY_LIMIT)
 }
 
+/** [local] raised to [merged]: a count or play time only grows, so plays not shared yet stay. Newest play first.
+ * A play time from another device also moves the replay window of [PlayHistory.record]. */
+internal fun combinePlays(local: List<PlayedTrack>, merged: List<PlayedTrack>): List<PlayedTrack> {
+    val byId = LinkedHashMap<String, PlayedTrack>()
+    local.forEach { byId[it.track.id] = it }
+    for (remote in merged) {
+        val mine = byId[remote.track.id]
+        byId[remote.track.id] = mine?.copy(
+            plays = maxOf(mine.plays, remote.plays),
+            lastPlayedAt = maxOf(mine.lastPlayedAt, remote.lastPlayedAt),
+        ) ?: remote
+    }
+    return byId.values.sortedByDescending { it.lastPlayedAt }.take(HISTORY_LIMIT)
+}
+
 /** The host sends plugins no play history, so the plugin logs every track the audio API resolves.
  * A track the host preloads counts too, even if it is skipped. */
-internal class PlayHistory(private val store: EntityStore) {
+internal class PlayHistory(private val store: EntityStore, private val log: PlayLog = PlayLog(store)) {
 
     suspend fun all(): List<PlayedTrack> = store.getDecoded(HISTORY_KEY, ListSerializer(PlayedTrack.serializer())).orEmpty()
 
@@ -48,24 +63,43 @@ internal class PlayHistory(private val store: EntityStore) {
     /** False when the play was not counted: it fell into the replay window of the last one, or the write failed. */
     suspend fun record(track: MetadataTrack): Boolean {
         if (track.id.isBlank()) return false
-        return writeLock.withLock {
-            val now = epochMillis()
-            val entries = all()
-            val previous = entries.firstOrNull { it.track.id == track.id }
-            if (previous != null && now - previous.lastPlayedAt < REPLAY_WINDOW_MS) return false
-            val updated = PlayedTrack(track, (previous?.plays ?: 0) + 1, now)
-            val rest = entries.filterNot { it.track.id == track.id }
-            store.put(HISTORY_KEY, json.encodeToJsonElement((listOf(updated) + rest).take(HISTORY_LIMIT)))
+        return store.pinned {
+            writeLock.withLock {
+                val now = epochMillis()
+                val entries = all()
+                val previous = entries.firstOrNull { it.track.id == track.id }
+                if (previous != null && now - previous.lastPlayedAt < REPLAY_WINDOW_MS) return@withLock false
+                val updated = PlayedTrack(track, (previous?.plays ?: 0) + 1, now)
+                val rest = entries.filterNot { it.track.id == track.id }
+                val encoded = json.encodeToJsonElement((listOf(updated) + rest).take(HISTORY_LIMIT))
+                val stored = store.put(HISTORY_KEY, encoded)
+                // The log only feeds Home rows, so a failed append still counts the play.
+                if (stored) log.append(track.id, now)
+                stored
+            }
         }
     }
 
     /** Stores [mergeRemotePlays] of [remote]. False when the write failed. */
     suspend fun mergeRemote(remote: List<MetadataTrack>, firstContact: Boolean): Boolean {
         if (remote.isEmpty()) return true
-        return writeLock.withLock {
+        return store.pinned {
+            writeLock.withLock {
+                // Read into a val first: QuickJS cannot compile a suspend call nested in a call's arguments inside withLock.
+                val local = all()
+                store.put(HISTORY_KEY, json.encodeToJsonElement(mergeRemotePlays(local, remote, firstContact)))
+            }
+        }
+    }
+
+    /** Stores [combinePlays] of [merged]. False when the write failed. */
+    suspend fun mergeCounts(merged: List<PlayedTrack>): Boolean = store.pinned {
+        writeLock.withLock {
             // Read into a val first: QuickJS cannot compile a suspend call nested in a call's arguments inside withLock.
             val local = all()
-            store.put(HISTORY_KEY, json.encodeToJsonElement(mergeRemotePlays(local, remote, firstContact)))
+            val combined = combinePlays(local, merged)
+            if (combined == local) return@withLock true
+            store.put(HISTORY_KEY, json.encodeToJsonElement(combined))
         }
     }
 

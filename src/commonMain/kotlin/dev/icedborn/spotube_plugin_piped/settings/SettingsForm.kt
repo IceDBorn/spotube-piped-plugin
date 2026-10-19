@@ -1,6 +1,7 @@
 package dev.icedborn.spotube_plugin_piped.settings
 
 import dev.icedborn.spotube_plugin_piped.metadata.Charts
+import dev.icedborn.spotube_plugin_piped.sync.StorageState
 
 /** Settings page shown in the plugin webview; posts JSON over the host bridge.
  * [manage] opens the same form from the host's logout button: signed in, no sign-in fields. */
@@ -13,6 +14,8 @@ internal fun settingsFormHtml(
     detectedRegion: String?,
     channel: String,
     library: String = LibraryPlaylist.ALWAYS.name,
+    storageSync: Boolean = true,
+    storageState: String = "",
     nonce: String = "",
     manage: Boolean = false,
     signedInAs: String? = null,
@@ -26,6 +29,8 @@ internal fun settingsFormHtml(
         "REGIONS" to regionOptions(region, detectedRegion),
         "CHANNELS" to channelOptions(channel),
         "LIBRARY" to libraryOptions(library),
+        "STORAGECHECKED" to if (storageSync) " checked" else "",
+        "STORAGESTATE" to escapeHtml(storageState),
         "NONCE" to escapeAttribute(nonce),
         "MANAGE" to if (manage) "true" else "false",
         "SIGNEDIN" to signedInLine(signedInAs, signedInOn),
@@ -46,6 +51,14 @@ private fun libraryOptions(selected: String): String = listOf(
 ).joinToString("") { (mode, label) ->
     val mark = if (mode.name == selected) " selected" else ""
     "<option value=\"${mode.name}\"$mark>$label</option>"
+}
+
+internal fun storageStateText(state: StorageState): String = when (state) {
+    StorageState.ACTIVE -> "Active. The library, settings and playlists sync through this instance's storage."
+    StorageState.OFF -> "Off. The library syncs through the account playlists."
+    StorageState.SIGNED_OUT -> "Needs a signed-in account."
+    StorageState.UNSUPPORTED -> "This instance has no storage, so the library syncs through the account playlists."
+    StorageState.UNCHECKED -> "Not checked yet. The next account refresh checks the instance."
 }
 
 private val PLACEHOLDER = Regex("__([A-Z]+)__")
@@ -211,6 +224,9 @@ private val FORM_HTML = """<!doctype html>
     plugin adds a generated one. Recently played lists the last 50 tracks; with no history yet it shows your
     saved tracks instead. Off removes it, and with no other playlist the Liked Tracks card disappears too.</p>
 
+    <label class="check"><input id="storageSync" type="checkbox"__STORAGECHECKED__> Sync through Piped storage</label>
+    <p class="hint">__STORAGESTATE__</p>
+
     <div class="row">
       <button id="closeSettings" class="secondary action" type="button">Done</button>
     </div>
@@ -302,6 +318,9 @@ private val FORM_HTML = """<!doctype html>
   });
   el('library').addEventListener('change', function () {
     post({ action: 'library', library: el('library').value }, 'Saved.', false);
+  });
+  el('storageSync').addEventListener('change', function () {
+    post({ action: 'storage', enabled: el('storageSync').checked }, 'Saved.', false);
   });
   el('tabLogin').addEventListener('click', function () { showTab('login'); });
   el('tabInstance').addEventListener('click', function () { showTab('instance'); });

@@ -9,6 +9,7 @@ import dev.icedborn.spotube_plugin_piped.client.AccountHttp
 import dev.icedborn.spotube_plugin_piped.client.PipedClient
 import dev.icedborn.spotube_plugin_piped.core.AccountSession
 import dev.icedborn.spotube_plugin_piped.core.InstanceSource
+import dev.icedborn.spotube_plugin_piped.core.Profiles
 import dev.icedborn.spotube_plugin_piped.core.RealCoreAPI
 import dev.icedborn.spotube_plugin_piped.metadata.AlbumLookup
 import dev.icedborn.spotube_plugin_piped.metadata.Charts
@@ -26,9 +27,15 @@ import dev.icedborn.spotube_plugin_piped.settings.RegionSetting
 import dev.icedborn.spotube_plugin_piped.settings.UpdateChannelSetting
 import dev.icedborn.spotube_plugin_piped.store.EntityStore
 import dev.icedborn.spotube_plugin_piped.store.LocalLibrary
+import dev.icedborn.spotube_plugin_piped.store.LocalPlayTimes
 import dev.icedborn.spotube_plugin_piped.store.PipedSavedLibrary
 import dev.icedborn.spotube_plugin_piped.store.PlayHistory
+import dev.icedborn.spotube_plugin_piped.store.PlayLog
+import dev.icedborn.spotube_plugin_piped.store.SkipLog
 import dev.icedborn.spotube_plugin_piped.store.StorageMigration
+import dev.icedborn.spotube_plugin_piped.sync.PlaySource
+import dev.icedborn.spotube_plugin_piped.sync.StorageSync
+import dev.icedborn.spotube_plugin_piped.sync.Taste
 import dev.krtirtho.plugin_interfaces.core.runPluginInitialized
 import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI
 import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI_SERVICE_NAME
@@ -79,20 +86,32 @@ private suspend fun start() {
     val httpClient = zipline.take<HttpClientAPI>(HttpClientAPI_SERVICE_NAME)
     val storage = zipline.take<PersistedStorageAPI>(PersistedStorageAPI_SERVICE_NAME)
     val store = EntityStore(storage)
-    val library = LocalLibrary(store)
     val session = AccountSession(store)
+    val profiles = Profiles(store, session)
+    store.useProfiles(profiles)
+    val library = LocalLibrary(store)
     val account = session.load()
     val instanceSource = InstanceSource(store, account?.instance)
-    val migration = StorageMigration(AccountHttp(httpClient), store, library, session, instanceSource)
+    val migration = StorageMigration(AccountHttp(httpClient), store, library, session, instanceSource, profiles)
     migration.run()
     val client = PipedClient(httpClient) { instanceSource.requireApi() }
     val albumLookup = AlbumLookup(client, store)
     val history = PlayHistory(store)
-    val mirror = PipedSavedLibrary(httpClient, store, library, albumLookup, instanceSource, initScope, history) { session.load() }
     // Bound by every host version; older hosts without it fall back to the Global charts.
     val systemInfo = runCatching { zipline.take<SystemInformationAPI>(SystemInformationAPI_SERVICE_NAME) }.getOrNull()
     val region = RegionSetting(store, systemInfo)
     val libraryPlaylist = LibraryPlaylistSetting(store)
+    val storageSync = StorageSync(httpClient, store, library, history, region, libraryPlaylist, initScope) { session.load() }
+    val mirror = PipedSavedLibrary(
+        httpClient,
+        store,
+        library,
+        albumLookup,
+        instanceSource,
+        initScope,
+        history,
+        storageSync,
+    ) { session.load() }
     val core = RealCoreAPI(
         httpClient = httpClient,
         storage = storage,
@@ -102,6 +121,9 @@ private suspend fun start() {
         region = region,
         channel = UpdateChannelSetting(store),
         libraryPlaylist = libraryPlaylist,
+        storageSetting = storageSync.setting,
+        storageMode = storageSync.mode,
+        onSettingSaved = { storageSync.settingChanged(it) },
         onLogin = {
             migration.adoptBareBindings()
             mirror.refreshCache()
@@ -109,7 +131,7 @@ private suspend fun start() {
         coroutineScope = initScope,
     )
     zipline.bind<CoreAPI>(CoreAPI_SERVICE_NAME, core)
-    val trackApi = RealMetadataTrackAPI(client, store, library, mirror, history)
+    val trackApi = RealMetadataTrackAPI(client, store, library, mirror, history, Taste(SkipLog(store), storageSync))
     val scrobbles = ScrobbleHistory(history, store, fetchTrack = { id -> trackApi.getTrack(id) }, onPlay = { mirror.played(it) })
     val playback = PipedClient(httpClient) { instanceSource.playback() ?: instanceSource.requireApi() }
     zipline.bind<AudioAPI>(
@@ -117,7 +139,7 @@ private suspend fun start() {
         RealPipedAudioAPI(AudioPipedClient(playback), scope = initScope) { scrobbles.onAudioRequested(it) },
     )
     zipline.bind<ScrobbleAPI>(ScrobbleAPI_SERVICE_NAME, RealScrobbleAPI(scrobbles))
-    bindMetadata(client, store, library, mirror, albumLookup, history, region, libraryPlaylist, trackApi)
+    bindMetadata(client, store, library, mirror, albumLookup, history, region, libraryPlaylist, trackApi, storageSync)
     if (account != null) initScope.launch { mirror.refreshCache() }
 }
 
@@ -131,6 +153,7 @@ private fun bindMetadata(
     region: RegionSetting,
     libraryPlaylist: LibraryPlaylistSetting,
     trackApi: RealMetadataTrackAPI,
+    storageSync: StorageSync,
 ) {
     val albumApi = RealMetadataAlbumAPI(client, store, library, mirror, albumLookup, initScope)
     val artistApi = RealMetadataArtistAPI(client, store, library, mirror) { seeds -> trackApi.radio(seeds, 50) }
@@ -147,6 +170,8 @@ private fun bindMetadata(
         albums = albumApi,
         playlists = playlistApi,
         search = searchApi,
+        plays = PlaySource(LocalPlayTimes(PlayLog(store)), storageSync),
+        store = store,
     )
     zipline.bind<MetadataSearchAPI>(MetadataSearchAPI_SERVICE_NAME, searchApi)
     zipline.bind<MetadataTrackAPI>(MetadataTrackAPI_SERVICE_NAME, trackApi)
@@ -154,5 +179,5 @@ private fun bindMetadata(
     zipline.bind<MetadataArtistAPI>(MetadataArtistAPI_SERVICE_NAME, artistApi)
     zipline.bind<MetadataPlaylistAPI>(MetadataPlaylistAPI_SERVICE_NAME, playlistApi)
     zipline.bind<MetadataBrowseAPI>(MetadataBrowseAPI_SERVICE_NAME, browseApi)
-    zipline.bind<MetadataUserAPI>(MetadataUserAPI_SERVICE_NAME, RealMetadataUserAPI(client, store))
+    zipline.bind<MetadataUserAPI>(MetadataUserAPI_SERVICE_NAME, RealMetadataUserAPI(client, store) { mirror.account() })
 }

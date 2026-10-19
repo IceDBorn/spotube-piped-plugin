@@ -9,6 +9,9 @@ import dev.icedborn.spotube_plugin_piped.fakes.vid
 import dev.icedborn.spotube_plugin_piped.store.EntityStore
 import dev.icedborn.spotube_plugin_piped.store.PlayHistory
 import dev.icedborn.spotube_plugin_piped.store.PlayedTrack
+import dev.icedborn.spotube_plugin_piped.store.Skip
+import dev.icedborn.spotube_plugin_piped.store.SkipLog
+import dev.icedborn.spotube_plugin_piped.sync.Taste
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlin.test.Test
@@ -40,6 +43,7 @@ class EndlessPlaybackTest {
             RadioStations(store),
             store,
             PlayHistory(store),
+            Taste(SkipLog(store), null) { clock },
             now = { clock },
         ) { liked }
 
@@ -47,6 +51,10 @@ class EndlessPlaybackTest {
 
         suspend fun played(vararg plays: PlayedTrack) {
             store.put("history.tracks", json.encodeToJsonElement(plays.toList()))
+        }
+
+        suspend fun skipped(vararg skips: Skip) {
+            SkipLog(store).append(skips.toList(), clock)
         }
     }
 
@@ -192,6 +200,33 @@ class EndlessPlaybackTest {
         assertEquals(0, radio.piped.count("RDAMVM${vid(1)}"))
         assertEquals(1, radio.piped.count("RDAMVM${vid(2)}"))
         assertEquals(2, radio.piped.total)
+        assertEquals(listOf(Skip(vid(1), "ar1", START)), SkipLog(radio.store).all())
+    }
+
+    @Test
+    fun `a skip from an earlier station lowers its artist`() = runTest {
+        val radio = Radio()
+        radio.skipped(Skip(vid(99), "ar1", START - DAY))
+        radio.piped.mix(0, "ar0", 1 to "ar1", 2 to "ar2", 3 to "ar3")
+        assertEquals(listOf(2, 3, 1).map(::vid), radio.batch(0, limit = 3))
+    }
+
+    @Test
+    fun `a song skipped elsewhere stays out`() = runTest {
+        val radio = Radio()
+        radio.skipped(Skip(vid(2), "zz", START - DAY))
+        radio.piped.mix(0, "ar0", *rowsBy(1..4, "ar"))
+        assertEquals(listOf(1, 3, 4).map(::vid), radio.batch(0, limit = 3))
+    }
+
+    @Test
+    fun `a skip 30 days old has no effect`() = runTest {
+        val radio = Radio()
+        radio.clock = START - 2 * DAY
+        radio.skipped(Skip(vid(1), "ar1", START - 30 * DAY), Skip(vid(2), "ar2", START - 30 * DAY))
+        radio.clock = START
+        radio.piped.mix(0, "ar0", *rowsBy(1..4, "ar"))
+        assertEquals(listOf(1, 2, 3).map(::vid), radio.batch(0, limit = 3))
     }
 
     @Test

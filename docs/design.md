@@ -1,7 +1,7 @@
 # Design notes
 
 These notes cover the parts of the plugin whose rules span several files: the row cache, the storage keys, the
-mirror index, the history log and endless playback.
+mirror index, storage sync, the history log and endless playback.
 
 ## Row cache
 
@@ -52,7 +52,7 @@ extend never interleave.
 The host gives each plugin one key-value store. `EntityStore` (`store/Store.kt`) keeps an in-memory copy of up to
 8,000,000 JSON characters and evicts the least recently used entries from memory first.
 
-`schema.version` holds the storage schema, currently 3. `StorageMigration` runs once at start, before any service
+`schema.version` holds the storage schema, currently 4. `StorageMigration` runs once at start, before any service
 reads storage. Each step moves the version to its own number once it and its writes succeed. A failed step stops
 the run and runs again at the next start, without repeating the steps before it:
 
@@ -62,6 +62,8 @@ the run and runs again at the next start, without repeating the steps before it:
   refill from page 1.
 - Version 3 deletes the `album.none:` keys, which kept a no-album verdict per artist and title, and stamps the
   plain `none` values in `track-album:` keys with the current time, so they expire like new verdicts.
+- Version 4 gives the device-wide library, local playlists, history and storage sync state to one profile, see
+  [Profiles](#profiles).
 
 Bare `saved.playlist:` and `mirror.playlist:` bindings from before account stamps are adopted at start, at each
 login and at each account refresh, not by a version step. A binding whose uuid is in the account's playlist
@@ -71,9 +73,10 @@ listing gets the account's stamp. One that is missing stays, since another accou
 the listing unreachable, the bindings wait. A new binding for the key or a playlist delete removes its miss record.
 
 Every start then deletes the `mirror.playlist:`, `binding.miss:mirror.playlist:`, `mirror.pending:` and old
-`mirror.playlistName:` keys of local playlists that no longer exist. It skips this when `piped.playlists` does not
-decode, so a corrupt list cannot take every binding with it. Last, it evicts the least recently used cache entries
-beyond the caps below and deletes expired `unresolvable:` latches.
+`mirror.playlistName:` keys of local playlists that no longer exist. The playlists of every profile keep their
+bindings. It skips this when a playlist list does not decode, so a corrupt list cannot take every binding with it.
+Last, it evicts the least recently used cache entries beyond the caps below and deletes expired `unresolvable:`
+latches.
 
 ### Settings and account
 
@@ -91,10 +94,16 @@ beyond the caps below and deletes expired `unresolvable:` latches.
 
 | Key | Value |
 | --- | --- |
-| `piped.library` | Saved track, album, artist and playlist ids on this device |
+| `piped.library` | Saved track, album, artist and playlist ids of the profile |
 | `piped.playlists` | Locally created playlists with their track ids |
 | `history.tracks` | Play history that Home and endless playback read, the last 200 tracks |
+| `history.plays` | Every counted play on this device as `[videoId, at]`, newest first, the last 5,000. Home's personal rows read it |
+| `taste.skips` | Skipped songs on this device as `[videoId, artist, at]`, newest first, the last 500 within 30 days |
 | `radio.stations` | The last 3 endless playback stations, each with its returned songs, pool and skips |
+
+`piped.library`, `piped.playlists`, `history.tracks`, `history.pending`, `history.seen`, `history.plays`,
+`taste.skips` and every storage sync key below except `storage.device` and `storage.support` are per profile,
+see [Profiles](#profiles).
 
 ### Caches
 
@@ -134,6 +143,53 @@ Eviction treats a key without an access stamp as used at the time of the evictio
 
 Every binding carries the account it belongs to. A binding of another instance or username is ignored for writes,
 so switching accounts never writes into the previous account's playlists.
+
+### Storage sync
+
+| Key | Value |
+| --- | --- |
+| `piped.storage.sync` | `OFF`; absent means on |
+| `storage.support` | `StorageVerdict` for one account |
+| `storage.device` | This device's id, 8 letters and digits |
+| `profiles.legacy` | Account stamp, or `out`, of the profile that reads the bare keys |
+| `storage.own:<suffix>` | Entries authored here, per suffix (`lib`, `set`, `pl`, `h0`-`h15`, `agg`, `t0`-`t15`, `taste`) |
+| `storage.dirty` | Kinds waiting for a push |
+| `storage.versions` | This device's manifest versions |
+| `storage.manifest.dirty` | The manifest still needs a push |
+| `storage.registered` | This device is in `spdevices` |
+| `storage.registry` | Cached `spdevices` |
+| `storage.etag:<file>` | Etag of the last read of a registry or manifest |
+| `storage.remote:<device>:<suffix>` | Another device's file with its manifest version |
+| `storage.imported` | Account stamp of the finished import |
+| `storage.pl.touched` | Local playlists changed since the last push, with times |
+| `storage.hist.cursor` | Generation of the open play segment |
+| `storage.hist.pending` | Plays made before the history import finished, with times, at most 300 |
+| `storage.dict.pending` | Track ids waiting for the dictionary |
+| `storage.imported.history` | Account stamp of the finished history import |
+| `storage.imported.taste` | Account stamp of the finished skip import |
+
+## Profiles
+
+Each account on the device and the signed-out state have a profile. An account's id is the 64-bit FNV-1a hash
+of its `instance|username` stamp in hex, and the signed-out profile's id is `out`. The profile named in
+`profiles.legacy` reads the bare keys, and every other profile reads `p<id>.<key>`. A missing or unreadable
+`profiles.legacy` gives no profile the bare keys, which then stay in storage unread.
+
+`EntityStore` resolves the per-profile keys (`isProfileKey`). A coroutine pinned with `forAccount` or `inProfile`
+uses that profile, and any other call uses the profile of the session at that moment. The account refresh, the
+storage sync and the history log uploads run pinned to their account, so work that ends after an account switch
+writes only into its own account. The writes of `LocalLibrary` and `PlayHistory` pin the active profile, so a
+read and its write never land in two profiles.
+
+A switch changes only which profile the session resolves to. Nothing is cleared, so a returning account finds
+its own files, marks and tombstones as it left them. Saves and plays made signed out stay in `out` and never
+reach an account.
+
+Schema 4 assigns the bare keys. Signed in, the account takes them, and `out` gets a copy of `piped.library`,
+`piped.playlists` and `history.tracks`. When the old `storage.owner` named another account, the bare sync keys
+are dropped and the account imports again. Signed out, `out` takes them, and the bare sync keys,
+`history.pending` and `history.seen` are dropped. `storage.owner` is then removed.
+A rerun after a failed write keeps the owner the first run chose.
 
 ## Mirror index
 
@@ -194,6 +250,163 @@ expires and a later lookup can then map that row to the unsaved id. `saved.gone:
 account and that row, the ids the unsave confirmed. A later resolution does not claim a recorded id from that row,
 but another row that maps to it, such as one added by a save on the web, still brings it back. A save on this
 device lifts the id, and a complete walk without the row drops the row's record.
+
+## Storage sync
+
+When the instance provides Piped storage and the setting is enabled, `StorageSync` syncs saved library items,
+settings, and local playlists through account storage files instead of the playlist mirrors.
+
+### Files and naming conventions
+
+Storage files belong to the account and use short names:
+
+- `spdevices`: Device registry (`DeviceRegistry`) listing registered device ids and their registration timestamps.
+- `sp<device>m`: Device manifest (`DeviceManifest`), mapping kind suffixes (`lib`, `set`, `pl`) to version numbers.
+- `sp<device><suffix>`: Synced data documents (`SyncDoc`) authored by a device (`lib` for library items, `set` for
+  settings, `pl` for local playlists, `h0` to `h15` for play segments, `agg` for folded play counts, `t0` to `t15`
+  for the track dictionary, `taste` for endless playback skips). Each document holds a list of `LwwEntry` records.
+
+Each device generates a random 8-character lowercase alphanumeric id stored in `storage.device`.
+
+### LWW entries and resolution
+
+Every entry is `{"k": key, "a": at, "v": value}`, where `at` is epoch milliseconds and a missing or null `v` is a
+removal. Library keys are `t:<id>`, `a:<id>`, `r:<canonical artist id>` and `p:<id>` with `v = 1`. Settings keys
+are `piped.region` and `piped.library.placeholder` with the stored value. A playlist key is the local playlist id
+with the whole `StoredPlaylist` as value. A file whose `v` field is not 1, or that lacks its list, is a failed fetch.
+
+`mergeLww` picks, per key, the entry with the highest `at`. A tie goes to the larger device id.
+
+### Imports at time zero
+
+The first sync of an account imports the local library, the snapshot's saved sets, the two settings and every
+local playlist with `at = 0`, so any later change on any device wins over them. `storage.imported` records the
+account stamp. Imported settings never override another device; only a change made in Settings (`at > 0`) does.
+
+With the switch off after that import, saves, unsaves, playlist edits and setting changes are still recorded and
+marked with their own times, next to the playlist path. Nothing is pushed until the switch is back on, and the next
+push sends them. Plays made with the switch off reach other devices only through the history log.
+
+### Manifest and versions
+
+`storage.versions` holds a counter per kind, raised after each confirmed push and published in `sp<device>m`. When
+the counter is missing, after a reset or an account switch, the device starts from its published manifest, so it
+never reuses a number another device has cached.
+
+At each refresh, the device reads the registry and each other device's manifest, fetching only the data files whose
+version differs from the one cached in `storage.remote:<device>:<suffix>`. Each file that arrives is stored at once.
+The manifest etag is kept only when every changed file was stored, so the next refresh fetches the rest. A pull
+applies a kind only when one of its files was stored since the process last applied it, or the account or the
+device list changed.
+
+### Device registry compare-and-swap
+
+`spdevices` is the only file more than one device writes. A device adds itself on its first sync: it stats the
+file, reads it when it exists, appends its id and puts it back with the stat's etag in `x-last-etag` (no etag when
+the file is missing). An "Invalid etag" answer starts the round again, at most 3 times. A registry that does not
+decode is never overwritten, since that would drop every other device.
+
+### Own files
+
+Every other file has one writer, its device. A push stats the file and puts it with that etag. A conflict means an
+earlier put landed late, so the device stats once more and retries once.
+
+### Dirty marks
+
+A change marks its kind in `storage.dirty` and schedules a push 30 seconds later. Each mark also bumps an in-memory
+counter for the kind. A push reads the counter before it uploads and clears the mark only when the counter has not
+moved, so a change made during the upload stays marked for the next push. That change also schedules another push
+30 seconds after the running one ends.
+
+### Local playlists and the size cap
+
+A playlist change records its id and time in `storage.pl.touched`. The entry is built from the stored playlist at
+push time. When that write fails the touches stay, and the next push builds the entry again. A pull overwrites a
+touched playlist only with another device's newer edit, which would win once the touch is pushed. A cover image over
+16,384 characters is sent as an empty string, and a device that receives an empty image keeps its own.
+
+Ids with the local `piped-` prefix stay out of the library kind. Each entry carries `listed`, whether the playlist
+is in the library list, and adding or removing it there touches the playlist. A pull lists or unlists the playlist
+to match, and an entry without `listed` reads as listed. A pulled delete removes the playlist and its listing.
+
+A file holds at most 500,000 bytes (`MAX_FILE_BYTES`; the backend allows 512,000). `fitToCap` drops the oldest
+removals first. When the live entries alone do not fit, the file is not sent and its kind stays marked.
+
+### Library and refresh in storage mode
+
+With storage active, saved state comes only from `piped.library`. A save or unsave records an entry and writes the
+local library, and an unsave skips the mirror ownership check. The first sync adds the items of the last playlist
+snapshot to the local library, so items saved on other devices through the mirrors stay saved. A pull applies only
+other devices' winning entries.
+
+The account refresh skips the three mirror playlists and their resolution, still caches the account's own
+playlists, walks and merges the history log once before the history import, and leaves it alone after that. It
+runs the storage sync before it writes a snapshot with empty saved sets, so the import still reads the old ones. A
+failed storage sync does not stop the refresh.
+
+### Plays and the track dictionary
+
+A scrobbled play the device counted becomes an event `e:<videoId>:<at>` in the open segment. A segment holds 1,000
+events and the ring has 16. `storage.hist.cursor` holds the generation of the open segment, a number that grows by
+one per segment opened. The open segment is `h<generation % 16>`, and each event stores its generation as its value.
+
+Before a segment is reused, its events fold into `c:<videoId>` entries of `agg` as `[count, lastAt]`, and the `w`
+entry of `agg` records the newest generation folded. A pull skips a device's events at or below that device's `w`.
+So a device that holds the new `agg` and an old copy of the emptied segment counts each play once. One that holds
+the old `agg` and the emptied segment undercounts until the new `agg` arrives, and `combinePlays` keeps the higher
+count it showed before. The fold writes `agg`, empties the segment, then moves the cursor. When a write fails, the
+play goes into the open segment and the next play retries the fold, which skips generations `w` already covers.
+`agg` is pushed before the segments and keeps the 5,000 most played folded tracks. When its put fails or it is
+over the size cap, the flush sends none of the segments, so other devices never get an emptied segment without the
+counts folded from it.
+
+The first sync per account writes the device's `history.tracks` counts into `agg` as `b:<videoId>` entries at
+time 0, after one last merge of the history log. Plays recorded before that import wait in `storage.hist.pending`,
+since the import may not include them. When the device's own manifest already lists `agg` or a segment, the device
+published plays for this account before its sync state was dropped, for example by a reinstall or the schema 4
+migration, and `history.tracks` holds them. The import then reads those files back into `storage.own:` and sets
+`storage.hist.cursor` to the newest generation of their events, at least one above `w`, instead of writing a new
+baseline that would count them twice. The restored files lack the waiting plays, so the import records them as
+events with their own times. A new baseline already counts them, so it drops them before it stamps the
+import. A failed read leaves the import and the waiting plays to the next refresh, and a waiting play whose record
+fails stays for the next release. Plays and the import share a lock, so no play lands between the release and the
+stamp.
+
+A pull counts, per track, every device's events above its `w` and folded counts plus the largest baseline of any
+device. Baselines overlap, because the history log already spread plays between devices. The 400 tracks with the
+newest plays, minus those without known metadata, raise `history.tracks` through `combinePlays`: a count or play
+time only grows, so plays counted from audio resolves alone stay.
+
+The dictionary has 16 shards `t0` to `t15`, chosen by the sum of the id's character codes. Saves of tracks, plays
+and the history import queue ids in `storage.dict.pending`. At the next push each queued id adds `t:<videoId>`
+with the cached track and `al:<videoId>` with a found album id. Only changed shards are marked, and a shard keeps
+its newest entries up to 120,000 bytes. A pull fills empty `track:` and `track-album:` keys from other devices'
+entries, each entry once per start.
+
+### Detection
+
+Detection runs inside the account refresh when the account has no verdict or the last check is older than 24 hours
+(`SUPPORT_RECHECK_MS`). It reads `/config` for `"s3Enabled"`, then stats `spdevices` with the session. A failed read
+keeps the previous verdict. The verdict in `storage.support` counts only for its instance and username.
+
+## Personal Home rows
+
+For you shows On repeat, Forgotten favorites, a time-of-day mix and Daily mix 1 to 3. With storage active they read
+the play events of the account's other devices from the store, and the folded counts for totals. This device's
+plays come from `history.plays`, which also holds those from before the import, plus its own events older than the
+log. Otherwise they read only `history.plays`. `PlaySource` picks the source at each build.
+
+- On repeat: plays of the last 30 days by count, at least 2 each.
+- Forgotten favorites: tracks with 5 plays or more and none in the last 60 days.
+- Time-of-day mix: plays of the last 30 days in the current local window of 4 hours (late night 0-4, early
+  morning 4-8, morning 8-12, afternoon 12-16, evening 16-20, night 20-24). Synced plays use this device's offset.
+- Daily mixes: the plays of the last 30 days split into sessions at gaps over 30 minutes. The most played artist
+  left starts a group and takes up to 4 more artists that share at least 2 sessions with it. A group needs 3
+  played songs. Its played and liked songs take turns with a radio of its top track, up to 25, without songs
+  played in the last 6 hours. Without the radio it shows with 10 known songs.
+
+A row needs 5 tracks and shows up to 20, a daily mix up to 25. Rows built together share one request for the
+same radio. Ids without stored track details drop out, and nothing is fetched for them.
 
 ## History log
 
@@ -279,10 +492,9 @@ Piped removes by stored position and refuses a position that holds no row. An ad
 leave position 0 without one, so the trim tries positions 1 and 2 after a refusal at position 0. With three empty
 positions at the head the trim finds no row, and the log grows past the cap.
 
-### Device history
+### Profile history
 
-`history.tracks` is one history per device, not per account. The plays merged from two accounts land in the same
-history.
+`history.tracks` belongs to the profile, so plays merged from two accounts never land in the same history.
 
 ## Endless playback
 
@@ -363,8 +575,11 @@ the last 200 saved songs.
 A song of the last batch counts as skipped when it was not played after the plugin returned the batch, while a
 later song of that batch was. The host asks for a batch when the last song starts, so the songs before it are over.
 The check reads only the last batch, because the history keeps 200 plays and an older batch could look skipped once
-its plays age out. A skipped song never seeds a mix, and each skip halves the scores of its artist's songs in that
-station.
+its plays age out. A song the station saw skipped never seeds a mix. Each new skip also goes to `taste.skips` and, with
+storage active, to the taste file `sp<dev>taste`, timed at its batch. Every batch reads the skips of every device of the
+account younger than 30 days. A skip weighs `1 - age / 30 days`, and an artist's songs score
+`0.5 ^ (sum of its weights)` in every station. A skipped song is not usable for 30 days, though it still seeds a
+mix when the listener queues it in another station.
 
 With scrobbles off, every audio resolve counts as a play, preloads included, so fewer skips show.
 

@@ -35,6 +35,11 @@ The **Settings** tab:
   latest release, *Nightly* at both and offers the newer of the two.
 - **Library playlist**: the playlist the plugin adds to Library -> Playlists. *Always show Recently played* is the
   default, see [Known limitations](#known-limitations).
+- **Sync through Piped storage**: on by default. When the instance has Piped storage and an account is signed in,
+  saved tracks, albums, artists and playlists, your local playlists, the chart region and the library playlist
+  setting sync between your devices through storage files on the account, instead of the "Spotube - Favorites",
+  "Spotube - Albums" and "Spotube - Artists" playlists. The line under the switch says whether storage is active.
+  Storage files are not visible on the Piped web site, and the instance's admin can read them.
 
 After switching from Nightly to Stable, no update is offered until a stable release is newer than the installed
 nightly. To go back sooner, reinstall a stable build from the
@@ -43,7 +48,10 @@ nightly. To go back sooner, reinstall a stable build from the
 The **Login** tab is optional. Sign in to, or register on, the instance. Saved tracks, albums and artists then sync
 to the "Spotube - Favorites", "Spotube - Albums" and "Spotube - Artists" playlists on that account, and a copy stays
 on the device for offline use. With Piped as the scrobble plugin, the play history syncs through a
-"Spotube - History" playlist, see [History sync](#history-sync). Without an account, everything stays local.
+"Spotube - History" playlist, see [History sync](#history-sync). Without an account, everything stays local. Each
+account on the device, and the signed-out state, has its own library, playlists and play history. Signing out shows
+the signed-out library, and the account's comes back when it signs in again. When this version lands while you are
+signed in, the account keeps what the device had and the signed-out library starts with a copy.
 
 While an account is signed in, the button on Piped reads Logout, and pressing it opens the same form on the
 Settings tab. The Login tab then shows who is signed in, with **Log out** and **Done**. Done closes the form and
@@ -62,16 +70,18 @@ Done on the form opened from Logout keeps the session without a check.
   reads, so history fills even when Piped is not the audio plugin, as long as the tracks come from Piped's
   metadata. With an account signed in, the history syncs between your devices, see
   [History sync](#history-sync).
-- **Home, For you tab**: recently played, your artists, radio mixes from recent plays, similar artists, new songs,
-  albums and playlists of those similar artists, albums and playlists of your most played artists, your playlists
-  and saved albums. Played artists go through the same artist search as related artists, described below. If the
-  search fails, the played artist stays as it is.
+- **Home, For you tab**: recently played, on repeat, your artists, three daily mixes, a mix for the time of day,
+  radio mixes from recent plays, similar artists, new songs, albums and playlists of those similar artists, albums
+  and playlists of your most played artists, your playlists, saved albums and forgotten favorites. Played artists
+  go through the same artist search as related artists, described below. If the search fails, the played artist
+  stays as it is.
 - **Home discovery**: "New songs for you", "Albums you might like", "Playlists you might like" and "Playlists for
   fans of" list music by the "Fans also like" artists. New songs reuse the radio mixes and cost no requests. The
   album and playlist rows read the top 4 of those artists, and each costs 1 channel fetch, shared with artist
   pages, plus 1 album search and 1 playlist search. "Playlists for fans of" costs 1 YouTube Music playlist search
-  for each of the top 2 artists. Home keeps a section for 30 minutes, so scrolling all of For you costs at most 14
-  more requests in that time.
+  for each of the top 2 artists. On repeat, forgotten favorites and the time-of-day mix cost no requests. Each
+  daily mix costs what a radio row costs, and nothing when its artists have fewer than 3 played songs. Home keeps
+  a section for 30 minutes, so scrolling all of For you costs at most 17 more requests in that time.
 - **Related artists**: artist pages and the Home "Fans also like" section list artists taken from YouTube Music
   radio mixes, because Piped has no related-artists endpoint. A radio row names the channel that uploaded the
   video, so each name goes through one artist search, cached by name until restart. The plugin lists the artist
@@ -90,11 +100,12 @@ Done on the form opened from Logout keeps the session without a check.
   seed's title has the same tag. Songs rank by how high they sit in the mixes the station has read. An artist gets
   at most 2 songs per batch with 3 songs between them, and only a batch the other artists cannot fill drops that
   rule. Every 4th slot takes a song you liked or played by an artist of the station, if you have not played it
-  in the last 2 days and it is not a music video. A song you skip lowers its artist for the rest of the station,
-  and the station never reads its mix. A batch reads at most 4 mixes, 1 request each. Up to 2 come from seeds the
-  station has not read yet, and up to 2 more from songs by other artists when the batch is still short. The first
-  batch of a radio from one song usually costs 2 requests, and later batches 1 to 3. A seed that looks like a
-  music video adds one song search.
+  in the last 2 days and it is not a music video. A song you skip stays out for 30 days and lowers its artist in
+  every station, on every device with storage sync, by half for a fresh skip and less as it ages. The station never
+  reads its mix. A batch reads at most 4 mixes, 1 request each. Up to 2 come from seeds the station has not read
+  yet, and up to 2 more from songs by other artists when the batch is still short. The first batch of a radio from
+  one song usually costs 2 requests, and later batches 1 to 3. A seed that looks like a music video adds one song
+  search.
   When the mixes cannot fill a batch, the seed artist's songs fill it for one /streams fetch and one song search.
   Home and related artists read the mix as it is.
 - **Home, Charts tab**: YouTube Music charts for your region, read from the playlists of the "YouTube Music Global
@@ -141,8 +152,14 @@ Home shows the merged plays after a restart of Spotube Nightly, which caches Hom
 Library -> Playlists does not list the playlist. Like every Piped playlist, anyone who has its id can read it, and
 a plugin version from before this feature lists it as a normal playlist. Removing rows on the web, or deleting the
 playlist, does not clear the history on any device. The next scrobbled play creates a deleted playlist again, and
-the playlist then holds only the plays made from then on. The history on a device belongs to the device, not to
-an account, so plays merged from two accounts land in the same history.
+the playlist then holds only the plays made from then on. Each account has its own history on the device, so plays
+from two accounts never mix.
+
+With [storage sync](#storage-requests) active, plays sync through storage files instead of the playlist. Each
+scrobbled play is stored with its time, so other devices show real counts and play times. The first sync on a
+device reads the history playlist one last time and keeps the counts the device has as its starting point. Where
+two devices start from overlapping counts, the larger one counts. After that the playlist is no longer read or
+written. Track details travel with the plays, so other devices skip the fetches.
 
 ### Audio streams
 
@@ -190,6 +207,25 @@ position without a row.
 Opening an album from a track waits up to 4 seconds for the album lookup, which costs at most 17 requests. After 4
 seconds the plugin shows a placeholder while the lookup finishes in the background, and opening the album again
 shows it.
+
+### Storage requests
+
+With storage active, a save or unsave costs no request at once. Changes go out 30 seconds after the first one,
+and at each account refresh: 2 requests per changed kind (library, settings, playlists) plus 2 for the device's
+manifest. Each refresh reads the device list and each other device's manifest, 1 request each, and fetches only
+the files that changed. The storage check costs 2 requests and runs at most once a day. The first sync on a device
+also writes the device into the device list, 2 or 3 requests, and reads its own manifest, 1 or 2 requests.
+
+A scrobbled play costs no request at once. The next push sends the open play file, 2 requests, and for a track the
+device has not shared before one track details file, 2 more. Plays within the 30 seconds share one push. Once all
+16 play files are full, every 1,000th play folds the oldest one into the counts file `agg`, and that push sends
+`agg` too, 2 more requests. The first sync with play history reads the history playlist once more, 1 request per
+page, and the device's own manifest, 1 or 2 requests. The push after it sends `agg` and up to 16 track details
+files, 2 requests each. After a reinstall, the device reads the play files it published before, 1 request each,
+instead of sending a new `agg`.
+
+A skip in endless playback costs no request at once. The next push sends the device's taste file and its manifest,
+4 requests, shared with other changes in the same 30 seconds.
 
 [docs/design.md](docs/design.md) lists the storage keys, the index format and the row cache rules.
 
@@ -247,6 +283,9 @@ sign-in and when a write to the account fails, so check a log before sharing it.
 
 ## Known limitations
 
+- Devices on a plugin version from before play sync keep writing the history playlist, and a device with storage
+  active no longer reads it, so plays do not pass between the two.
+- Play history is per device, so a device signed in to two accounts shares its play counts with both.
 - Spotube Nightly has a Region setting (Settings -> Language & Region), but it does not pass it to plugins yet.
 - Spotube Nightly does not pass its theme colors to plugins, so the settings form cannot follow the app theme. The
   form has its own light/dark toggle, remembered between openings, and does not switch itself when you change the
@@ -271,3 +310,8 @@ sign-in and when a write to the account fails, so check a log before sharing it.
   neither it adds nothing. The Library playlist setting controls the entry: *Only when there are no playlists* adds
   it only while you have no other playlist, and *Off* removes it, which also hides the Liked tracks card when no
   other playlist exists. The entry cannot be edited or deleted.
+- Turning storage off later goes back to the mirror playlists as they were when storage turned on. Storage never
+  writes to them, so anything unsaved while storage was on comes back on the next refresh, and anything saved
+  during that time is missing from them.
+- Saves and unsaves made on a device with storage off reach only its mirror playlists. Devices with storage on
+  never read the mirrors, so they miss those changes until the device turns storage on and makes them again.

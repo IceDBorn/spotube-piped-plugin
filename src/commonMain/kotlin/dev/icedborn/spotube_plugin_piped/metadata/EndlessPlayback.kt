@@ -4,11 +4,12 @@ import dev.icedborn.spotube_plugin_piped.core.epochMillis
 import dev.icedborn.spotube_plugin_piped.store.EntityStore
 import dev.icedborn.spotube_plugin_piped.store.PlayHistory
 import dev.icedborn.spotube_plugin_piped.store.PlayedTrack
+import dev.icedborn.spotube_plugin_piped.store.Skip
 import dev.icedborn.spotube_plugin_piped.store.orNull
+import dev.icedborn.spotube_plugin_piped.sync.Taste
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlin.math.pow
 
 /** Mixes of other artists' songs that a short radio batch reads, one request each. */
 internal const val RADIO_HOPS = 2
@@ -23,7 +24,6 @@ private const val FAMILIAR_REST_MS = 2 * 24 * 60 * 60_000L
 private const val LIKED_SCAN_LIMIT = 200
 private const val HOP_WEIGHT = 0.7
 private const val CATALOG_WEIGHT = 0.3
-private const val SKIP_FACTOR = 0.5
 private const val LIKED_BONUS = 3.0
 
 /** Builds endless playback batches from the station the seeds belong to, so no batch repeats an earlier one. */
@@ -32,6 +32,7 @@ internal class EndlessPlayback(
     private val stations: RadioStations,
     private val store: EntityStore,
     private val history: PlayHistory,
+    private val taste: Taste,
     private val now: () -> Long = { epochMillis() },
     private val likedIds: suspend () -> List<String>,
 ) {
@@ -41,7 +42,8 @@ internal class EndlessPlayback(
 
     suspend fun batch(seedIds: List<String>, limit: Int): List<MetadataTrack> {
         if (seedIds.isEmpty() || limit <= 0) return emptyList()
-        return lock.withLock { build(seedIds.distinct(), limit) }
+        val tracks = lock.withLock { build(seedIds.distinct(), limit) }
+        return tracks
     }
 
     private suspend fun build(seeds: List<String>, limit: Int): List<MetadataTrack> {
@@ -52,8 +54,12 @@ internal class EndlessPlayback(
             .maxWithOrNull(compareBy<RadioStation> { it.overlap(seeds) }.thenBy { it.updatedAt })
         val plays = history.all().associateBy { it.track.id }
         val liked = likedIds().takeLast(LIKED_SCAN_LIMIT).toSet()
-        val start = (chosen ?: RadioStation(at)).withSkips { plays[it]?.lastPlayedAt ?: 0L }.withQueued(seeds)
-        val batch = StationBatch(start, at, seeds, limit, plays, liked)
+        val base = chosen ?: RadioStation(at)
+        val checked = base.withSkips { plays[it]?.lastPlayedAt ?: 0L }
+        recordSkips(base, checked)
+        val start = checked.withQueued(seeds)
+        val skips = taste.skips()
+        val batch = StationBatch(start, at, seeds, limit, plays, liked, skips)
         batch.prepare()
         batch.readSeedMixes()
         batch.readHops()
@@ -69,6 +75,14 @@ internal class EndlessPlayback(
         return tracks
     }
 
+    /** Hands the songs [checked] newly marked skipped to the taste, timed at the batch they came in. */
+    private suspend fun recordSkips(before: RadioStation, checked: RadioStation) {
+        val batchAt = before.batches.lastOrNull()?.at ?: return
+        val known = before.skipped.toHashSet()
+        val fresh = checked.skipped.filterNot { it in known }
+        taste.record(fresh.map { Skip(it.id, it.version.substringBefore('|'), batchAt) })
+    }
+
     /** One batch in the making. [station] collects the mixes the batch reads. */
     private inner class StationBatch(
         var station: RadioStation,
@@ -77,6 +91,7 @@ internal class EndlessPlayback(
         private val limit: Int,
         private val plays: Map<String, PlayedTrack>,
         private val liked: Set<String>,
+        private val skips: List<Skip>,
     ) {
         // Memoized per batch, since every store read of a track touches the eviction index.
         private val tracks = HashMap<String, MetadataTrack?>()
@@ -85,11 +100,14 @@ internal class EndlessPlayback(
         private val excludedIds = HashSet<String>()
         private val excludedVersions = HashSet<String>()
         private val returnedArtists = HashSet<String>()
+
+        // The station's own skips keep their seeds from seeding a mix, while every device's skips block and lower.
         private val skippedIds = station.skipped.mapTo(HashSet()) { it.id }
-        private val skips = station.skipped.groupingBy { it.version.substringBefore('|') }.eachCount()
+        private val penalties = artistPenalties(skips, at)
 
         init {
             excludedIds += seeds + station.queued + station.returnedIds()
+            excludedIds += blockedSongs(skips, at)
             for (batch in station.batches) {
                 for (track in batch.tracks) {
                     excludedVersions += track.version
@@ -194,7 +212,7 @@ internal class EndlessPlayback(
         private fun usable(track: MetadataTrack, version: String) =
             track.id !in excludedIds && version !in excludedVersions && versionTags(track).all { it in seedTags }
 
-        private fun penalty(artist: String) = SKIP_FACTOR.pow(skips[artist] ?: 0)
+        private fun penalty(artist: String) = penalties[artist] ?: 1.0
 
         private suspend fun seedTrack(id: String): MetadataTrack? = plays[id]?.track ?: track(id)
 

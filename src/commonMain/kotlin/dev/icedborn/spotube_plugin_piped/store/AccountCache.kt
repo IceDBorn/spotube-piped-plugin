@@ -13,6 +13,7 @@ import dev.icedborn.spotube_plugin_piped.core.epochMillis
 import dev.icedborn.spotube_plugin_piped.core.mapConcurrently
 import dev.icedborn.spotube_plugin_piped.core.normalizeInstance
 import dev.icedborn.spotube_plugin_piped.core.sameAccount
+import dev.icedborn.spotube_plugin_piped.sync.StorageSync
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -47,6 +48,7 @@ internal class AccountCache(
     private val historySync: HistorySync,
     private val refreshScope: CoroutineScope,
     private val sessionProvider: suspend () -> PipedAccount?,
+    private val storage: StorageSync? = null,
 ) {
 
     private val refreshMutex = Mutex()
@@ -140,8 +142,13 @@ internal class AccountCache(
         return epochMillis() - state.refreshedAt >= ACCOUNT_REFRESH_TTL_MS
     }
 
-    private suspend fun refresh(account: PipedAccount) {
+    // Pinned, so a refresh that ends after an account switch writes only into its own account's data.
+    private suspend fun refresh(account: PipedAccount) = store.forAccount(account) { refreshFor(account) }
+
+    private suspend fun refreshFor(account: PipedAccount) {
         val entries = http.listing(account) ?: return
+        val storageActive = storage?.prepare(account) == true
+        if (storageActive) return refreshWithStorage(account, entries, storage)
         // Bindings a start without a listing could not adopt get their chance on every refresh.
         val localIds = library.storedPlaylists().map { it.id }
         store.adoptBareBindings(account, entries.mapNotNull { it.string("id") }.toHashSet(), bindingKeys(localIds))
@@ -203,6 +210,37 @@ internal class AccountCache(
                 orNull("saved set resolution") { resolver.resolve(account, start, previous, mirrorIds, mirrorState) }
             }
         }
+    }
+
+    /** Storage holds the saved sets and, once imported, the plays. The history log is merged one last time before
+     * that import and then neither walked, trimmed nor written. */
+    private suspend fun refreshWithStorage(account: PipedAccount, entries: List<JsonObject>, storage: StorageSync) {
+        val previous = store.cachedAccountState()?.takeIf { sameAccount(it, account) }
+        val historySince = historySync.generation
+        val historyId = historySync.playlistIn(account, entries)
+        val logId = historyId?.takeUnless { storage.historyImported(account) }
+        val listed = attribute(account, entries).filter { it.kind == null && (it.uuid != historyId || it.uuid == logId) }
+        val walks = listed.mapConcurrently(3) { item ->
+            val isLog = item.uuid == historyId
+            val walk = if (isLog) http.walk(account, item.uuid, pageLimit = MIRROR_PAGE_LIMIT) else http.walk(account, item.uuid)
+            if (!isLog) store.rememberTracks(walk.rows)
+            item to walk
+        }
+        if (!stillSignedIn(account)) return
+        val logWalk = walks.firstOrNull { it.first.uuid == logId }?.second?.takeIf(::provenEnd)
+        if (logId != null && logWalk != null) orNull("history merge") { historySync.merge(account, logId, logWalk, historySince) }
+        orNull("storage sync") { storage.sync(account, previous) }
+        if (!stillSignedIn(account)) return
+        val playlists = mutableListOf<CachedAccountPlaylist>()
+        for ((item, walk) in walks) {
+            if (item.uuid == historyId) continue
+            val total = listedCount(item.entry) ?: -1
+            rows.cacheWalk(item.uuid, walk, total)
+            playlists += CachedAccountPlaylist(item.uuid, item.entry.string("name").orEmpty(), total)
+        }
+        val state =
+            AccountCacheState(playlists = playlists, refreshedAt = epochMillis(), instance = account.instance, username = account.username)
+        store.cacheAccountState(state)
     }
 
     /** Merges a history log walked to its end, then trims it and retries the waiting plays in the background. */

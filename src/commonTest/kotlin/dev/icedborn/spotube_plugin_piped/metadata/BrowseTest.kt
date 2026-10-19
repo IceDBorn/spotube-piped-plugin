@@ -1,11 +1,23 @@
 package dev.icedborn.spotube_plugin_piped.metadata
 
 import dev.icedborn.spotube_plugin_piped.client.albumStub
+import dev.icedborn.spotube_plugin_piped.core.Profile
+import dev.icedborn.spotube_plugin_piped.core.Profiles
 import dev.icedborn.spotube_plugin_piped.fakes.vid
 import dev.icedborn.spotube_plugin_piped.settings.LibraryPlaylistSetting
 import dev.icedborn.spotube_plugin_piped.settings.RegionSetting
 import dev.icedborn.spotube_plugin_piped.store.AccountHarness
+import dev.icedborn.spotube_plugin_piped.store.LocalPlayTimes
 import dev.icedborn.spotube_plugin_piped.store.PlayHistory
+import dev.icedborn.spotube_plugin_piped.store.PlayLog
+import dev.icedborn.spotube_plugin_piped.sync.LwwEntry
+import dev.icedborn.spotube_plugin_piped.sync.PlayCount
+import dev.icedborn.spotube_plugin_piped.sync.PlaySource
+import dev.icedborn.spotube_plugin_piped.sync.StoragePlayTimes
+import dev.icedborn.spotube_plugin_piped.sync.SyncDoc
+import dev.icedborn.spotube_plugin_piped.sync.countValue
+import dev.icedborn.spotube_plugin_piped.sync.eventKey
+import dev.icedborn.spotube_plugin_piped.sync.foldedKey
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.artist.MetadataArtist
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.browse.MetadataBrowseItem
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.browse.MetadataBrowseSection
@@ -30,9 +42,9 @@ class BrowseTest {
         "PL4fGSI1pDJn5kI81J1fYWK5eZRl1zJ5kM",
     )
 
-    private class Harness(scope: CoroutineScope) {
+    private class Harness(scope: CoroutineScope, playSource: PlaySource? = null, profiles: Boolean = false) {
         var clock = 0L
-        val account = AccountHarness(scope)
+        val account = AccountHarness(scope, profiles = profiles)
         val piped = account.piped
         val store = account.store
         val history = PlayHistory(store)
@@ -58,6 +70,9 @@ class BrowseTest {
             albums = albums,
             playlists = playlists,
             search = RealMetadataSearchAPI(account.client, store),
+            plays = playSource ?: PlaySource(LocalPlayTimes(PlayLog(store)), null),
+            store = store,
+            offsetMinutes = { 0 },
             now = { clock },
         )
     }
@@ -314,5 +329,168 @@ class BrowseTest {
         val sections = h.allForYou()
         assertTrue(sections.none { it.description == "Playlists for fans of" })
         assertTrue(sections.any { it.title == "Albums you might like" })
+    }
+
+    private val evening = 20_000 * DAY_MS + 18 * 60 * 60_000L
+
+    /** Track [index] known by its details, and played at each of [ats], without a play from `history.record`. */
+    private suspend fun Harness.logged(index: Int, vararg ats: Long) {
+        store.rememberTrack(track(index))
+        ats.forEach { PlayLog(store).append(vid(index), it) }
+    }
+
+    private suspend fun Harness.forYouRows(): List<MetadataBrowseSection> {
+        val rows = mutableListOf<MetadataBrowseSection>()
+        var page: PaginationStrategy? = null
+        do {
+            val result = browse.list("for-you", page)
+            rows += result.items
+            page = result.nextPagination
+        } while (page != null)
+        return rows
+    }
+
+    @Test
+    fun `On repeat lists the tracks played twice this month`() = runTest {
+        val h = Harness(backgroundScope)
+        h.clock = evening
+        (1..5).forEach { h.logged(it, evening - DAY_MS, evening - 2 * DAY_MS) }
+        h.logged(6, evening - DAY_MS)
+        val row = h.forYouRows().single { it.title == "On repeat" }
+        assertEquals((1..5).map { vid(it) }.toSet(), row.items.map { (it as MetadataBrowseItem.Track).data.id }.toSet())
+    }
+
+    @Test
+    fun `a personal row with fewer than five tracks is left out`() = runTest {
+        val h = Harness(backgroundScope)
+        h.clock = evening
+        (1..4).forEach { h.logged(it, evening - DAY_MS, evening - 2 * DAY_MS) }
+        assertTrue(h.forYouRows().none { it.title == "On repeat" })
+    }
+
+    @Test
+    fun `Forgotten favorites list old favorites`() = runTest {
+        val h = Harness(backgroundScope)
+        h.clock = evening
+        (1..5).forEach { i -> h.logged(i, *LongArray(5) { evening - 70 * DAY_MS - it }) }
+        val row = h.forYouRows().single { it.title == "Forgotten favorites" }
+        assertEquals(5, row.items.size)
+    }
+
+    @Test
+    fun `the time of day mix is named after the window of the build`() = runTest {
+        val h = Harness(backgroundScope)
+        h.clock = evening
+        (1..5).forEach { h.logged(it, evening - it * DAY_MS) }
+        h.logged(6, evening - DAY_MS - 8 * 60 * 60_000L)
+        val row = h.forYouRows().single { it.title == "Your evening mix" }
+        assertEquals((1..5).map { vid(it) }.toSet(), row.items.map { (it as MetadataBrowseItem.Track).data.id }.toSet())
+    }
+
+    @Test
+    fun `a daily mix costs one radio of its top track`() = runTest {
+        val h = Harness(backgroundScope)
+        h.clock = evening
+        val start = evening - 8 * 60 * 60_000L
+        h.logged(1, start, start + 60_000L, start + 120_000L)
+        h.logged(2, start + 180_000L, start + 240_000L)
+        h.logged(3, start + 300_000L)
+        h.forYouRows()
+        assertEquals(1, h.piped.count("RDAMVM${vid(1)}"))
+    }
+
+    @Test
+    fun `a daily mix shares the radio row's request when both use one seed`() = runTest {
+        val h = Harness(backgroundScope)
+        h.serveGamma()
+        h.piped.latencyMs = 100
+        h.clock = evening
+        val start = evening - 8 * 60 * 60_000L
+        h.logged(1, start, start + 60_000L, start + 120_000L)
+        h.logged(2, start + 180_000L, start + 240_000L)
+        h.logged(3, start + 300_000L)
+        h.history.record(track(1))
+        h.forYouRows()
+        assertEquals(1, h.piped.count("RDAMVM${vid(1)}"))
+    }
+
+    @Test
+    fun `a daily mix of fewer than three played songs makes no request`() = runTest {
+        val h = Harness(backgroundScope)
+        h.clock = evening
+        h.logged(1, evening - 8 * 60 * 60_000L, evening - 8 * 60 * 60_000L + 60_000L)
+        h.logged(2, evening - 8 * 60 * 60_000L + 120_000L)
+        h.forYouRows()
+        assertEquals(0, h.piped.count("RDAMVM"))
+    }
+
+    @Test
+    fun `On repeat follows Recently played`() = runTest {
+        val h = Harness(backgroundScope)
+        h.clock = evening
+        (1..5).forEach { h.logged(it, evening - DAY_MS, evening - 2 * DAY_MS) }
+        h.history.record(track(1))
+        assertEquals(listOf("Recently played", "On repeat"), h.browse.list("for-you", null).items.take(2).map { it.title })
+    }
+
+    @Test
+    fun `a daily mix leaves out songs played in the last six hours`() = runTest {
+        val h = Harness(backgroundScope)
+        h.serveGamma()
+        h.clock = evening
+        val start = evening - 8 * 60 * 60_000L
+        h.logged(1, start, start + 60_000L, start + 120_000L)
+        h.logged(2, start + 180_000L, start + 240_000L)
+        h.logged(3, start + 300_000L)
+        h.logged(2, evening - 60_000L)
+        val row = h.forYouRows().single { it.title == "Daily mix 1" }
+        val ids = row.items.map { (it as MetadataBrowseItem.Track).data.id }
+        assertTrue(vid(2) !in ids)
+    }
+
+    @Test
+    fun `a daily mix whose radio fails shows with ten known songs`() = runTest {
+        val h = Harness(backgroundScope)
+        h.clock = evening
+        val start = evening - 8 * 60 * 60_000L
+        (1..10).forEach { i ->
+            h.store.rememberTrack(track(i))
+            PlayLog(h.store).append(vid(i), start + i * 60_000L)
+        }
+        h.piped.unfetchable += "RDAMVM${vid(1)}"
+        val row = h.forYouRows().single { it.title == "Daily mix 1" }
+        assertEquals(10, row.items.size)
+    }
+
+    @Test
+    fun `folded plays reach the Forgotten favorites row`() = runTest {
+        val folded = (1..5).map { i ->
+            LwwEntry(foldedKey(vid(i)), 5L, countValue(PlayCount(6, evening - 70 * DAY_MS)))
+        }
+        val playTimes = StoragePlayTimes { listOf(SyncDoc(device = "x", entries = folded)) }
+        val h = Harness(backgroundScope, playSource = PlaySource(playTimes, null))
+        h.clock = evening
+        (1..5).forEach { h.store.rememberTrack(track(it)) }
+        val row = h.forYouRows().single { it.title == "Forgotten favorites" }
+        assertEquals(5, row.items.size)
+    }
+
+    @Test
+    fun `with synced plays the For you tab comes first without local history`() = runTest {
+        val docs = listOf(SyncDoc(device = "x", entries = listOf(LwwEntry(eventKey(vid(1), 10L), 10L, null))))
+        val playTimes = StoragePlayTimes { docs }
+        val h = Harness(backgroundScope, playSource = PlaySource(playTimes, null))
+        assertEquals("for-you", h.browse.genres().first().id)
+    }
+
+    @Test
+    fun `an account switch immediately invalidates personal rows`() = runTest {
+        val h = Harness(backgroundScope, profiles = true)
+        h.clock = evening
+        h.account.signIn("ice")
+        (1..5).forEach { h.logged(it, evening - DAY_MS, evening - 2 * DAY_MS) }
+        assertEquals(1, h.forYouRows().filter { it.title == "On repeat" }.size)
+        h.account.signIn("bob")
+        assertEquals(0, h.forYouRows().filter { it.title == "On repeat" }.size)
     }
 }

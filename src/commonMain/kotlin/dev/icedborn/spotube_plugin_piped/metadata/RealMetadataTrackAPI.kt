@@ -8,7 +8,9 @@ import dev.icedborn.spotube_plugin_piped.store.LocalLibrary
 import dev.icedborn.spotube_plugin_piped.store.PipedSavedLibrary
 import dev.icedborn.spotube_plugin_piped.store.PlayHistory
 import dev.icedborn.spotube_plugin_piped.store.SavedKind
+import dev.icedborn.spotube_plugin_piped.store.SkipLog
 import dev.icedborn.spotube_plugin_piped.store.orNull
+import dev.icedborn.spotube_plugin_piped.sync.Taste
 import dev.krtirtho.plugin_interfaces.extras.logger.Logger
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationResult
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
@@ -23,10 +25,11 @@ internal class RealMetadataTrackAPI(
     private val library: LocalLibrary,
     private val mirror: PipedSavedLibrary,
     history: PlayHistory,
+    taste: Taste = Taste(SkipLog(store), null),
 ) : MetadataTrackAPI {
 
     private val mixes = RadioMixes(client, store)
-    private val endless = EndlessPlayback(mixes, RadioStations(store), store, history) { mirror.allSavedTrackIds() }
+    private val endless = EndlessPlayback(mixes, RadioStations(store), store, history, taste) { mirror.allSavedTrackIds() }
 
     override suspend fun getTrack(id: String): MetadataTrack {
         store.cachedTrack(id)?.let { return it }
