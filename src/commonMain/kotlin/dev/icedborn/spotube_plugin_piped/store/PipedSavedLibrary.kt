@@ -47,6 +47,8 @@ internal class PipedSavedLibrary(
         sessionProvider,
     )
 
+    suspend fun account(): PipedAccount? = sessionProvider()
+
     suspend fun cachedState(): AccountCacheState? = cache.cachedState()
 
     suspend fun accountPlaylist(id: String): CachedAccountPlaylist? = cache.accountPlaylist(id)

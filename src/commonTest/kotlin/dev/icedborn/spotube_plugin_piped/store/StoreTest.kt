@@ -107,7 +107,7 @@ class StoreTest {
         val http = FakeHttp().apply { onPath("/channel/", body = Fixtures.channel) }
         // Seed the blank record a throttled fetch would leave behind.
         store.cacheChannel(BLANK_CHANNEL_ID, PipedChannelInfo(id = BLANK_CHANNEL_ID, name = ""))
-        val user = RealMetadataUserAPI(PipedClient(http) { "https://piped.example" }, store).getUser(BLANK_CHANNEL_ID)
+        val user = RealMetadataUserAPI(PipedClient(http) { "https://piped.example" }, store) { null }.getUser(BLANK_CHANNEL_ID)
         assertNotNull(user)
         assertEquals(1, http.countMatching("/channel/"), "a blank cached name must not be trusted")
     }

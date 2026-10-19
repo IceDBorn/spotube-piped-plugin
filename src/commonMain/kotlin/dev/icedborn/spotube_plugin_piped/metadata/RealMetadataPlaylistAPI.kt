@@ -29,6 +29,7 @@ import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.Thumbnail
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.playlist.MetadataPlaylist
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.playlist.MetadataPlaylistAPI
 import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
+import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.user.MetadataUser
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -56,7 +57,7 @@ internal class RealMetadataPlaylistAPI(
     }
 
     private suspend fun storedPlaylist(id: String): MetadataPlaylist {
-        storedLocalPlaylist(id)?.let { return it.toEntity() }
+        storedLocalPlaylist(id)?.let { return it.toEntity(owner()) }
         mirror.accountPlaylist(id)?.let { return it.toEntity() }
         val cached = store.cachedAlbumPlaylist(id)
         val page = if (cached != null && (cached.relatedStreams.isNotEmpty() || !cached.nextpage.isNullOrBlank())) {
@@ -109,7 +110,8 @@ internal class RealMetadataPlaylistAPI(
         val paging = pagination.getOffsetOrDefault()
         // Only user-visible playlists: created, cached account, and bookmarked. The internal sync playlists
         // ("Spotube - Albums/Artists/Favorites/History") stay hidden.
-        val created = library.storedPlaylists().map { it.toEntity() }
+        val owner = owner()
+        val created = library.storedPlaylists().map { it.toEntity(owner) }
         val account = mirror.cachedState()?.playlists.orEmpty().map { it.toEntity() }
         val known = (created + account).distinctBy { it.id }
         val knownIds = known.map { it.id }.toHashSet()
@@ -250,7 +252,7 @@ internal class RealMetadataPlaylistAPI(
         library.savePlaylists(listOf(record.id))
         // A failed mirror is marked pending and retried by the next account refresh.
         mirror.mirrorCreatePlaylist(record.id, name, trackIds)
-        return record.toEntity()
+        return record.toEntity(owner())
     }
 
     override suspend fun updatePlaylist(
@@ -289,7 +291,12 @@ internal class RealMetadataPlaylistAPI(
         library.upsertPlaylist(updated)
         // After the save, so a push that reads the record in between never clears the touch with the old one.
         if (updated != existing) mirror.touchPlaylist(id)
-        return updated.toEntity()
+        return updated.toEntity(owner())
+    }
+
+    private suspend fun owner(): MetadataUser? {
+        val account = mirror.account()
+        return account?.let(::accountUser)
     }
 
     override suspend fun deletePlaylist(id: String) {
@@ -389,14 +396,14 @@ internal class RealMetadataPlaylistAPI(
     }
 }
 
-private fun StoredPlaylist.toEntity(): MetadataPlaylist = MetadataPlaylist(
+private fun StoredPlaylist.toEntity(owner: MetadataUser?): MetadataPlaylist = MetadataPlaylist(
     id = id,
     title = name,
     description = description,
     thumbnails = emptyList(),
     trackCount = trackIds.size,
     externalUri = null,
-    owner = null,
+    owner = owner,
 )
 
 private fun CachedAccountPlaylist.toEntity(): MetadataPlaylist = MetadataPlaylist(

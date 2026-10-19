@@ -179,5 +179,5 @@ private fun bindMetadata(
     zipline.bind<MetadataArtistAPI>(MetadataArtistAPI_SERVICE_NAME, artistApi)
     zipline.bind<MetadataPlaylistAPI>(MetadataPlaylistAPI_SERVICE_NAME, playlistApi)
     zipline.bind<MetadataBrowseAPI>(MetadataBrowseAPI_SERVICE_NAME, browseApi)
-    zipline.bind<MetadataUserAPI>(MetadataUserAPI_SERVICE_NAME, RealMetadataUserAPI(client, store))
+    zipline.bind<MetadataUserAPI>(MetadataUserAPI_SERVICE_NAME, RealMetadataUserAPI(client, store) { mirror.account() })
 }
