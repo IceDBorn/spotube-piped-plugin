@@ -125,7 +125,8 @@ minutes when the duration is unknown), counts once, so one listen is not two pla
 for the session only and is not stored. A scrobble for a track Piped cannot resolve, for example a track that came
 from another metadata plugin, is dropped and the audio role keeps feeding the history for it.
 
-Spotube Nightly caches Home until it restarts, so a region change shows up after a restart.
+Spotube Nightly caches Home until it restarts or you sign in or out. On a phone, pulling Home down also reloads
+it. A region change shows up after one of those.
 
 ### History sync
 
@@ -147,7 +148,7 @@ without a scrobble.
   300 plays wait on the device while it cannot reach the instance. The plugin tries a video the instance refuses 4
   times, at least 6 hours apart, and then drops it from the upload. The play stays in the history of the device.
 
-Home shows the merged plays after a restart of Spotube Nightly, which caches Home until then.
+Home shows the merged plays once Spotube Nightly reloads it, after a restart or, on a phone, a pull down on Home.
 
 Library -> Playlists does not list the playlist. Like every Piped playlist, anyone who has its id can read it, and
 a plugin version from before this feature lists it as a normal playlist. Removing rows on the web, or deleting the
@@ -293,17 +294,15 @@ sign-in and when a write to the account fails, so check a log before sharing it.
 - Spotube Nightly has no settings button for plugins yet, only Login and Logout. The plugin opens its settings
   form from that button, so while an account is signed in, the button reads Logout but opens the settings. To
   sign out, press **Log out** on the Login tab. Spotube Nightly also clears the plugin's web view data on every
-  press, which does not affect the Piped session.
+  press of Logout, which does not affect the Piped session.
 - Spotube Nightly sends scrobbles to plugins since its commit `fab60107` of 2 October 2026. On an older build,
   selecting Piped as the scrobble plugin has no effect. Play history keeps coming from the tracks the plugin
   resolves audio for, see [Features](#features), and the plugin uploads nothing to the history log.
-- Spotube Nightly does not ask plugins for updates yet, so the update channel has no effect and no update is
-  offered in the app. To update, install from one of these URLs again:
+- Spotube Nightly asks plugins for updates at startup and when the selected plugins change, and only with
+  Settings -> Updates -> *Automatically check for updates* on. It shows one update prompt at a time, so a newer
+  build can wait for the next start. To update sooner, install from one of these URLs again:
   - stable: `https://github.com/IceDBorn/spotube-piped-plugin/releases/latest/download/spotube-plugin-piped.smplug`
   - nightly: `https://github.com/IceDBorn/spotube-piped-plugin/releases/download/nightly/spotube-plugin-piped.smplug`
-- Spotube Nightly on Android shows no play or add-to-queue buttons on Home sections made of tracks, such as
-  "Recently played" and "Because you listened to", so those tracks cannot be played from Home there. Desktop shows
-  the buttons.
 - Spotube Nightly shows its "Liked tracks" card in Library -> Playlists only when the plugin returns at least one
   playlist. To keep the card reachable, the plugin adds a generated "Recently played" playlist, holding the last 50
   tracks you played. With no history yet it shows a "Liked Songs" playlist of your saved tracks instead, and with

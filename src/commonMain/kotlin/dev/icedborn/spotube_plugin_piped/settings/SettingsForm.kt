@@ -209,7 +209,8 @@ private val FORM_HTML = """<!doctype html>
     <label for="region">Charts region</label>
     <select id="region">__REGIONS__</select>
     <p class="hint">Picks the YouTube Music charts on Home. Auto follows the system time zone, and countries
-    without charts use Global. Spotube keeps Home until it restarts, so a change shows after a restart.</p>
+    without charts use Global. Spotube keeps Home until it restarts, so a change shows after a restart, or on a
+    phone after pulling Home down.</p>
 
     <label for="channel">Update channel</label>
     <select id="channel">__CHANNELS__</select>
