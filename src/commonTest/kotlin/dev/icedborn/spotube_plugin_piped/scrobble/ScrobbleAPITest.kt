@@ -5,13 +5,13 @@ import dev.icedborn.spotube_plugin_piped.fakes.FakeStorage
 import dev.icedborn.spotube_plugin_piped.fakes.vid
 import dev.icedborn.spotube_plugin_piped.store.EntityStore
 import dev.icedborn.spotube_plugin_piped.store.PlayHistory
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.artist.MetadataArtist
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.Thumbnail
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
-import dev.krtirtho.plugin_interfaces.plugin_apis.scrobble.ScrobbleTrack
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.encodeToJsonElement
+import org.spotube.plugin_interfaces.plugin_apis.metadata.artist.MetadataArtist
+import org.spotube.plugin_interfaces.plugin_apis.metadata.common.Thumbnail
+import org.spotube.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
+import org.spotube.plugin_interfaces.plugin_apis.scrobble.ScrobbleTrack
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue

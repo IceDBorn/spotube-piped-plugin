@@ -2,9 +2,9 @@ package dev.icedborn.spotube_plugin_piped.settings
 
 import dev.icedborn.spotube_plugin_piped.client.json
 import dev.icedborn.spotube_plugin_piped.store.EntityStore
-import dev.krtirtho.plugin_interfaces.host_apis.SystemInformationAPI
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import org.spotube.plugin_interfaces.host_apis.SystemInformationAPI
 
 private const val REGION_KEY = "piped.region"
 

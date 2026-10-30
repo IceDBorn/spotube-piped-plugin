@@ -3,9 +3,9 @@ package dev.icedborn.spotube_plugin_piped.store
 import dev.icedborn.spotube_plugin_piped.client.json
 import dev.icedborn.spotube_plugin_piped.fakes.FAKE_INSTANCE
 import dev.icedborn.spotube_plugin_piped.fakes.vid
-import dev.krtirtho.plugin_interfaces.host_apis.HttpMethod
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.encodeToJsonElement
+import org.spotube.plugin_interfaces.host_apis.HttpMethod
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull

@@ -1,13 +1,13 @@
 package dev.icedborn.spotube_plugin_piped.core
 
 import dev.icedborn.spotube_plugin_piped.store.offsetPage
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationResult
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import org.spotube.plugin_interfaces.plugin_apis.metadata.common.PaginationResult
+import org.spotube.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
 
 /** Per-item fetches for one page, [limit] at a time; results keep the input order. */
 internal suspend fun <T, R> List<T>.mapConcurrently(limit: Int = 4, transform: suspend (T) -> R): List<R> {

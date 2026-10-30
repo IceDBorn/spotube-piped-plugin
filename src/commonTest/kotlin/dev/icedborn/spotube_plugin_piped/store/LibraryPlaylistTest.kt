@@ -13,11 +13,11 @@ import dev.icedborn.spotube_plugin_piped.settings.LibraryPlaylist
 import dev.icedborn.spotube_plugin_piped.settings.LibraryPlaylistSetting
 import dev.icedborn.spotube_plugin_piped.settings.RECENTLY_PLAYED_ID
 import dev.icedborn.spotube_plugin_piped.settings.isSynthetic
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.artist.MetadataArtist
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.Thumbnail
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlinx.coroutines.test.runTest
+import org.spotube.plugin_interfaces.plugin_apis.metadata.artist.MetadataArtist
+import org.spotube.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
+import org.spotube.plugin_interfaces.plugin_apis.metadata.common.Thumbnail
+import org.spotube.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith

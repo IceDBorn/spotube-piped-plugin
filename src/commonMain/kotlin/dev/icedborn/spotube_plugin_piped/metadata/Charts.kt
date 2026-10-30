@@ -7,12 +7,12 @@ import dev.icedborn.spotube_plugin_piped.client.toTrack
 import dev.icedborn.spotube_plugin_piped.core.epochMillis
 import dev.icedborn.spotube_plugin_piped.store.EntityStore
 import dev.icedborn.spotube_plugin_piped.store.orNull
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.playlist.MetadataPlaylist
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.encodeToJsonElement
+import org.spotube.plugin_interfaces.plugin_apis.metadata.playlist.MetadataPlaylist
+import org.spotube.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 
 /** "YouTube Music Global Charts": publishes every chart as a playlist. Piped has no charts endpoint. */
 private const val CHARTS_CHANNEL_ID = "UCrKZcyOJVWnJ60zM1XWllNw"

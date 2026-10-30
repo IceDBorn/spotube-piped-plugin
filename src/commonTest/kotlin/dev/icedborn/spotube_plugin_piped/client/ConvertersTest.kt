@@ -1,8 +1,8 @@
 package dev.icedborn.spotube_plugin_piped.client
 
 import dev.icedborn.spotube_plugin_piped.core.Fixtures
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.album.MetadataAlbumType
 import kotlinx.serialization.json.Json
+import org.spotube.plugin_interfaces.plugin_apis.metadata.album.MetadataAlbumType
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull

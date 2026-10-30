@@ -8,8 +8,8 @@ import dev.icedborn.spotube_plugin_piped.core.PipedAccount
 import dev.icedborn.spotube_plugin_piped.core.accountStamp
 import dev.icedborn.spotube_plugin_piped.store.EntityStore
 import dev.icedborn.spotube_plugin_piped.store.orNull
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.user.MetadataUser
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.user.MetadataUserAPI
+import org.spotube.plugin_interfaces.plugin_apis.metadata.user.MetadataUser
+import org.spotube.plugin_interfaces.plugin_apis.metadata.user.MetadataUserAPI
 
 internal class RealMetadataUserAPI(
     private val client: PipedClient,

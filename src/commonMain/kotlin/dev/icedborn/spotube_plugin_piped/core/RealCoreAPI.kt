@@ -10,13 +10,6 @@ import dev.icedborn.spotube_plugin_piped.settings.settingsFormHtml
 import dev.icedborn.spotube_plugin_piped.settings.storageStateText
 import dev.icedborn.spotube_plugin_piped.sync.StorageMode
 import dev.icedborn.spotube_plugin_piped.sync.StorageSyncSetting
-import dev.krtirtho.plugin_interfaces.extras.logger.Logger
-import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI
-import dev.krtirtho.plugin_interfaces.host_apis.HttpMethod
-import dev.krtirtho.plugin_interfaces.host_apis.PersistedStorageAPI
-import dev.krtirtho.plugin_interfaces.host_apis.WebViewAPI
-import dev.krtirtho.plugin_interfaces.plugin_apis.core.CoreAPI
-import dev.krtirtho.plugin_interfaces.plugin_apis.core.PluginUpdateInfo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -34,6 +27,13 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import net.swiftzer.semver.SemVer
+import org.spotube.plugin_interfaces.extras.logger.Logger
+import org.spotube.plugin_interfaces.host_apis.HttpClientAPI
+import org.spotube.plugin_interfaces.host_apis.HttpMethod
+import org.spotube.plugin_interfaces.host_apis.PersistedStorageAPI
+import org.spotube.plugin_interfaces.host_apis.WebViewAPI
+import org.spotube.plugin_interfaces.plugin_apis.core.CoreAPI
+import org.spotube.plugin_interfaces.plugin_apis.core.PluginUpdateInfo
 import kotlin.coroutines.cancellation.CancellationException
 
 private const val FORM_WAIT_MS = 900_000L

@@ -4,9 +4,6 @@ import dev.icedborn.spotube_plugin_piped.core.PipedAccount
 import dev.icedborn.spotube_plugin_piped.core.percentEncoded
 import dev.icedborn.spotube_plugin_piped.store.MirrorRows
 import dev.icedborn.spotube_plugin_piped.store.orNull
-import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI
-import dev.krtirtho.plugin_interfaces.host_apis.HttpMethod
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
@@ -16,6 +13,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
+import org.spotube.plugin_interfaces.host_apis.HttpClientAPI
+import org.spotube.plugin_interfaces.host_apis.HttpMethod
+import org.spotube.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 
 /** Pages one walk of an account playlist reads by default. */
 internal const val ACCOUNT_PAGE_LIMIT = 6

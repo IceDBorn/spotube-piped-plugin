@@ -10,8 +10,8 @@ import dev.icedborn.spotube_plugin_piped.store.EntityStore
 import dev.icedborn.spotube_plugin_piped.store.LocalLibrary
 import dev.icedborn.spotube_plugin_piped.store.PipedSavedLibrary
 import dev.icedborn.spotube_plugin_piped.store.PlayHistory
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
 import kotlinx.coroutines.test.runTest
+import org.spotube.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull

@@ -3,12 +3,12 @@ package dev.icedborn.spotube_plugin_piped.metadata
 import dev.icedborn.spotube_plugin_piped.client.PipedSearchItem
 import dev.icedborn.spotube_plugin_piped.client.toTrack
 import dev.icedborn.spotube_plugin_piped.fakes.vid
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import org.spotube.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 
 /** A mix row the way /playlists lists it. */
 internal fun mixRow(videoId: String, uploader: String, channel: String, title: String = "Song $videoId") = buildJsonObject {

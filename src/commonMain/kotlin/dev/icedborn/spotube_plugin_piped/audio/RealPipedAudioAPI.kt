@@ -6,19 +6,19 @@ import dev.icedborn.spotube_plugin_piped.client.PipedStreamsInfo
 import dev.icedborn.spotube_plugin_piped.client.PipedVideoStream
 import dev.icedborn.spotube_plugin_piped.client.toBasic
 import dev.icedborn.spotube_plugin_piped.core.epochMillis
-import dev.krtirtho.plugin_interfaces.extras.logger.Logger
-import dev.krtirtho.plugin_interfaces.plugin_apis.audio.AudioAPI
-import dev.krtirtho.plugin_interfaces.plugin_apis.audio.AudioFormat
-import dev.krtirtho.plugin_interfaces.plugin_apis.audio.AudioQuality
-import dev.krtirtho.plugin_interfaces.plugin_apis.audio.AudioSource
-import dev.krtirtho.plugin_interfaces.plugin_apis.audio.AudioStream
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.Thumbnail
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import org.spotube.plugin_interfaces.extras.logger.Logger
+import org.spotube.plugin_interfaces.plugin_apis.audio.AudioAPI
+import org.spotube.plugin_interfaces.plugin_apis.audio.AudioFormat
+import org.spotube.plugin_interfaces.plugin_apis.audio.AudioQuality
+import org.spotube.plugin_interfaces.plugin_apis.audio.AudioSource
+import org.spotube.plugin_interfaces.plugin_apis.audio.AudioStream
+import org.spotube.plugin_interfaces.plugin_apis.metadata.common.Thumbnail
+import org.spotube.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.abs
 

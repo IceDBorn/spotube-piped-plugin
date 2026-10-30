@@ -8,9 +8,9 @@ import dev.icedborn.spotube_plugin_piped.fakes.FAKE_INSTANCE
 import dev.icedborn.spotube_plugin_piped.fakes.FakePiped
 import dev.icedborn.spotube_plugin_piped.fakes.FakeStorage
 import dev.icedborn.spotube_plugin_piped.fakes.vid
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.encodeToJsonElement
+import org.spotube.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

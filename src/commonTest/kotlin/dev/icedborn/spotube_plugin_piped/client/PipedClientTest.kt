@@ -3,8 +3,8 @@ package dev.icedborn.spotube_plugin_piped.client
 import dev.icedborn.spotube_plugin_piped.core.Fixtures
 import dev.icedborn.spotube_plugin_piped.core.pathWithoutQuery
 import dev.icedborn.spotube_plugin_piped.fakes.FakeHttp
-import dev.krtirtho.plugin_interfaces.host_apis.HttpMethod
 import kotlinx.coroutines.test.runTest
+import org.spotube.plugin_interfaces.host_apis.HttpMethod
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith

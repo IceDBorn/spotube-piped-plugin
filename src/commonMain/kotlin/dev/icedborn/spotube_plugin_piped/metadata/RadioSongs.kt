@@ -9,8 +9,8 @@ import dev.icedborn.spotube_plugin_piped.client.toTrack
 import dev.icedborn.spotube_plugin_piped.client.videoIdOf
 import dev.icedborn.spotube_plugin_piped.store.EntityStore
 import dev.icedborn.spotube_plugin_piped.store.orNull
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.artist.MetadataArtist
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
+import org.spotube.plugin_interfaces.plugin_apis.metadata.artist.MetadataArtist
+import org.spotube.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 
 private val VIDEO_MARKERS = listOf(
     "official video", "music video", "official hd video", "lyric video", "lyrics video", "visualizer", "visualiser",

@@ -4,11 +4,11 @@ import dev.icedborn.spotube_plugin_piped.client.canonicalArtistId
 import dev.icedborn.spotube_plugin_piped.client.cleanArtistName
 import dev.icedborn.spotube_plugin_piped.core.mapConcurrently
 import dev.icedborn.spotube_plugin_piped.store.orNull
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.album.MetadataAlbum
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.artist.MetadataArtist
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.playlist.MetadataPlaylist
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlinx.coroutines.CompletableDeferred
+import org.spotube.plugin_interfaces.plugin_apis.metadata.album.MetadataAlbum
+import org.spotube.plugin_interfaces.plugin_apis.metadata.artist.MetadataArtist
+import org.spotube.plugin_interfaces.plugin_apis.metadata.playlist.MetadataPlaylist
+import org.spotube.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 
 /** A radio or an artist set is reused by the sections built within this long of its fetch. */
 private const val RADIO_REUSE_MS = 2 * 60_000L

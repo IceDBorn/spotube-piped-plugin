@@ -1,9 +1,9 @@
 package dev.icedborn.spotube_plugin_piped.client
 
 import dev.icedborn.spotube_plugin_piped.store.RowCache
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import org.spotube.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 
 // Piped returns null for fields declared non-nullable (title, uploaderUrl, views,
 // duration, description); coerceInputValues maps those nulls to the declared defaults.

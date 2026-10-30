@@ -15,15 +15,15 @@ import dev.icedborn.spotube_plugin_piped.store.PipedSavedLibrary
 import dev.icedborn.spotube_plugin_piped.store.PlayHistory
 import dev.icedborn.spotube_plugin_piped.store.orNull
 import dev.icedborn.spotube_plugin_piped.sync.PlaySource
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.album.MetadataAlbum
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.artist.MetadataArtist
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.browse.MetadataBrowseAPI
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.browse.MetadataBrowseGenre
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.browse.MetadataBrowseItem
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.browse.MetadataBrowseSection
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationResult
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
+import org.spotube.plugin_interfaces.plugin_apis.metadata.album.MetadataAlbum
+import org.spotube.plugin_interfaces.plugin_apis.metadata.artist.MetadataArtist
+import org.spotube.plugin_interfaces.plugin_apis.metadata.browse.MetadataBrowseAPI
+import org.spotube.plugin_interfaces.plugin_apis.metadata.browse.MetadataBrowseGenre
+import org.spotube.plugin_interfaces.plugin_apis.metadata.browse.MetadataBrowseItem
+import org.spotube.plugin_interfaces.plugin_apis.metadata.browse.MetadataBrowseSection
+import org.spotube.plugin_interfaces.plugin_apis.metadata.common.PaginationResult
+import org.spotube.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
+import org.spotube.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 
 private const val FOR_YOU = "for-you"
 private const val CHARTS = "charts"

@@ -5,10 +5,10 @@ import dev.icedborn.spotube_plugin_piped.client.json
 import dev.icedborn.spotube_plugin_piped.client.postConfirmed
 import dev.icedborn.spotube_plugin_piped.client.string
 import dev.icedborn.spotube_plugin_piped.core.PipedAccount
-import dev.krtirtho.plugin_interfaces.extras.logger.Logger
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import org.spotube.plugin_interfaces.extras.logger.Logger
 
 private val playlistMirrorLog = Logger("PipedPlaylistMirror")
 

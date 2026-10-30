@@ -6,7 +6,7 @@ import dev.icedborn.spotube_plugin_piped.client.listedCount
 import dev.icedborn.spotube_plugin_piped.client.string
 import dev.icedborn.spotube_plugin_piped.core.PipedAccount
 import dev.icedborn.spotube_plugin_piped.core.accountStamp
-import dev.krtirtho.plugin_interfaces.extras.logger.Logger
+import org.spotube.plugin_interfaces.extras.logger.Logger
 import kotlin.coroutines.cancellation.CancellationException
 
 private val mirrorLog = Logger("PipedSavedLibrary")

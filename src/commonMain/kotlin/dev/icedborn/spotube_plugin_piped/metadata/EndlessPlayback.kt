@@ -7,9 +7,9 @@ import dev.icedborn.spotube_plugin_piped.store.PlayedTrack
 import dev.icedborn.spotube_plugin_piped.store.Skip
 import dev.icedborn.spotube_plugin_piped.store.orNull
 import dev.icedborn.spotube_plugin_piped.sync.Taste
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.spotube.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 
 /** Mixes of other artists' songs that a short radio batch reads, one request each. */
 internal const val RADIO_HOPS = 2

@@ -2,7 +2,6 @@ rootProject.name = "spotube-plugin-piped"
 
 pluginManagement {
     repositories {
-        maven { url = uri("vendor/maven") }
         google {
             content {
                 includeGroupByRegex("com\\.android.*")
@@ -19,7 +18,6 @@ pluginManagement {
 
 dependencyResolutionManagement {
     repositories {
-        maven { url = uri("vendor/maven") }
         google {
             content {
                 includeGroupByRegex("com\\.android.*")

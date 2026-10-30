@@ -13,9 +13,9 @@ import dev.icedborn.spotube_plugin_piped.core.PipedAccount
 import dev.icedborn.spotube_plugin_piped.fakes.FakeHttp
 import dev.icedborn.spotube_plugin_piped.fakes.FakeStorage
 import dev.icedborn.spotube_plugin_piped.metadata.RealMetadataUserAPI
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonPrimitive
+import org.spotube.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

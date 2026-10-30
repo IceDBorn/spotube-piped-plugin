@@ -4,7 +4,7 @@ import dev.icedborn.spotube_plugin_piped.core.epochMillis
 import dev.icedborn.spotube_plugin_piped.store.Skip
 import dev.icedborn.spotube_plugin_piped.store.SkipLog
 import dev.icedborn.spotube_plugin_piped.store.orNull
-import dev.krtirtho.plugin_interfaces.extras.logger.Logger
+import org.spotube.plugin_interfaces.extras.logger.Logger
 
 private val tasteLog = Logger("PipedTaste")
 

@@ -1,8 +1,8 @@
 package dev.icedborn.spotube_plugin_piped.store
 
 import dev.icedborn.spotube_plugin_piped.fakes.vid
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.artist.MetadataArtist
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
+import org.spotube.plugin_interfaces.plugin_apis.metadata.artist.MetadataArtist
+import org.spotube.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlin.test.Test
 import kotlin.test.assertEquals
 

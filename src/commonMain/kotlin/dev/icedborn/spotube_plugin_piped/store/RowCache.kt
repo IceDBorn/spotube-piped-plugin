@@ -5,10 +5,10 @@ import dev.icedborn.spotube_plugin_piped.client.PipedPlaylistPage
 import dev.icedborn.spotube_plugin_piped.client.PipedSearchItem
 import dev.icedborn.spotube_plugin_piped.client.json
 import dev.icedborn.spotube_plugin_piped.core.epochMillis
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.encodeToJsonElement
+import org.spotube.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 
 /** An open cache is re-anchored against page 1 at most this often. */
 internal const val OPEN_ANCHOR_TTL_MS = 2 * 60_000L

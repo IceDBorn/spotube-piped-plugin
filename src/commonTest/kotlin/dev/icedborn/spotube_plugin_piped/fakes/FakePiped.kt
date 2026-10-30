@@ -1,9 +1,6 @@
 package dev.icedborn.spotube_plugin_piped.fakes
 
 import dev.icedborn.spotube_plugin_piped.client.json
-import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI
-import dev.krtirtho.plugin_interfaces.host_apis.HttpMethod
-import dev.krtirtho.plugin_interfaces.host_apis.HttpResponse
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -16,6 +13,9 @@ import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import org.spotube.plugin_interfaces.host_apis.HttpClientAPI
+import org.spotube.plugin_interfaces.host_apis.HttpMethod
+import org.spotube.plugin_interfaces.host_apis.HttpResponse
 
 const val FAKE_INSTANCE = "https://piped.example"
 

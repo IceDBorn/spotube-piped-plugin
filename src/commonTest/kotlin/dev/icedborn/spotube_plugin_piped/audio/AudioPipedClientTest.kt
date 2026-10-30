@@ -2,11 +2,11 @@ package dev.icedborn.spotube_plugin_piped.audio
 
 import dev.icedborn.spotube_plugin_piped.client.PipedClient
 import dev.icedborn.spotube_plugin_piped.fakes.FakeHttp
-import dev.krtirtho.plugin_interfaces.host_apis.HttpMethod
-import dev.krtirtho.plugin_interfaces.plugin_apis.audio.AudioSource
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
+import org.spotube.plugin_interfaces.host_apis.HttpMethod
+import org.spotube.plugin_interfaces.plugin_apis.audio.AudioSource
+import org.spotube.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

@@ -3,13 +3,13 @@ package dev.icedborn.spotube_plugin_piped.store
 import dev.icedborn.spotube_plugin_piped.client.canonicalArtistId
 import dev.icedborn.spotube_plugin_piped.client.json
 import dev.icedborn.spotube_plugin_piped.core.epochMillis
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.artist.MetadataArtist
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.encodeToJsonElement
+import org.spotube.plugin_interfaces.plugin_apis.metadata.artist.MetadataArtist
+import org.spotube.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 
 private const val HISTORY_KEY = "history.tracks"
 private const val HISTORY_LIMIT = 200

@@ -9,10 +9,10 @@ import dev.icedborn.spotube_plugin_piped.fakes.noSessionScope
 import dev.icedborn.spotube_plugin_piped.store.EntityStore
 import dev.icedborn.spotube_plugin_piped.store.LocalLibrary
 import dev.icedborn.spotube_plugin_piped.store.PipedSavedLibrary
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
+import org.spotube.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
+import org.spotube.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue

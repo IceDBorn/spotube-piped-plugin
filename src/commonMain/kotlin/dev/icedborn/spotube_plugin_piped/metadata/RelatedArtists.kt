@@ -7,8 +7,8 @@ import dev.icedborn.spotube_plugin_piped.client.cleanArtistName
 import dev.icedborn.spotube_plugin_piped.client.toArtist
 import dev.icedborn.spotube_plugin_piped.core.mapConcurrently
 import dev.icedborn.spotube_plugin_piped.store.orNull
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.artist.MetadataArtist
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
+import org.spotube.plugin_interfaces.plugin_apis.metadata.artist.MetadataArtist
+import org.spotube.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 
 internal const val RELATED_ARTISTS_LIMIT = 12
 

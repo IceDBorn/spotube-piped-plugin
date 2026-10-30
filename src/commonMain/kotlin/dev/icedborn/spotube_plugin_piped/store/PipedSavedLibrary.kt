@@ -7,9 +7,9 @@ import dev.icedborn.spotube_plugin_piped.core.InstanceSource
 import dev.icedborn.spotube_plugin_piped.core.PipedAccount
 import dev.icedborn.spotube_plugin_piped.metadata.AlbumLookup
 import dev.icedborn.spotube_plugin_piped.sync.StorageSync
-import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlinx.coroutines.CoroutineScope
+import org.spotube.plugin_interfaces.host_apis.HttpClientAPI
+import org.spotube.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 
 /** The signed-in account's library: the cached snapshot, write-through of saves to the mirror playlists, and
  * the account copies of local playlists. The local library stays the source of truth. */

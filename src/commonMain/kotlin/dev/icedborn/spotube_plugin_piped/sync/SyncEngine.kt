@@ -8,7 +8,6 @@ import dev.icedborn.spotube_plugin_piped.core.PipedAccount
 import dev.icedborn.spotube_plugin_piped.core.accountStamp
 import dev.icedborn.spotube_plugin_piped.core.epochMillis
 import dev.icedborn.spotube_plugin_piped.store.EntityStore
-import dev.krtirtho.plugin_interfaces.extras.logger.Logger
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
@@ -17,6 +16,7 @@ import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
+import org.spotube.plugin_interfaces.extras.logger.Logger
 
 internal const val FLUSH_DELAY_MS = 30_000L
 private const val REGISTRY_ATTEMPTS = 3

@@ -1,10 +1,10 @@
 package dev.icedborn.spotube_plugin_piped.fakes
 
 import dev.icedborn.spotube_plugin_piped.client.string
-import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI
-import dev.krtirtho.plugin_interfaces.host_apis.HttpMethod
-import dev.krtirtho.plugin_interfaces.host_apis.HttpResponse
 import kotlinx.coroutines.delay
+import org.spotube.plugin_interfaces.host_apis.HttpClientAPI
+import org.spotube.plugin_interfaces.host_apis.HttpMethod
+import org.spotube.plugin_interfaces.host_apis.HttpResponse
 
 /** Offline stand-in for the host HTTP API: routes are matched in registration order, misses give a 404. */
 class FakeHttp : HttpClientAPI {

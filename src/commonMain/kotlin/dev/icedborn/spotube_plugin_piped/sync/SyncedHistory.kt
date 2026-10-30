@@ -5,12 +5,12 @@ import dev.icedborn.spotube_plugin_piped.store.EntityStore
 import dev.icedborn.spotube_plugin_piped.store.HISTORY_PENDING_LIMIT
 import dev.icedborn.spotube_plugin_piped.store.PlayHistory
 import dev.icedborn.spotube_plugin_piped.store.PlayedTrack
-import dev.krtirtho.plugin_interfaces.extras.logger.Logger
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonPrimitive
+import org.spotube.plugin_interfaces.extras.logger.Logger
 
 private const val CURSOR_KEY = "storage.hist.cursor"
 private const val HELD_KEY = "storage.hist.pending"

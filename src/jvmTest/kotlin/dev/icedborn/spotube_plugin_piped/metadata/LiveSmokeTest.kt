@@ -4,10 +4,10 @@ import dev.icedborn.spotube_plugin_piped.client.PipedClient
 import dev.icedborn.spotube_plugin_piped.client.PipedSearchFilter
 import dev.icedborn.spotube_plugin_piped.client.channelIdOf
 import dev.icedborn.spotube_plugin_piped.client.playlistIdOf
-import dev.krtirtho.plugin_interfaces.host_apis.HttpClientAPI
-import dev.krtirtho.plugin_interfaces.host_apis.HttpMethod
-import dev.krtirtho.plugin_interfaces.host_apis.HttpResponse
 import kotlinx.coroutines.test.runTest
+import org.spotube.plugin_interfaces.host_apis.HttpClientAPI
+import org.spotube.plugin_interfaces.host_apis.HttpMethod
+import org.spotube.plugin_interfaces.host_apis.HttpResponse
 import kotlin.test.Test
 import kotlin.test.assertTrue
 

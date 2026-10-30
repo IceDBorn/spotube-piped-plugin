@@ -2,10 +2,10 @@ package dev.icedborn.spotube_plugin_piped.store
 
 import dev.icedborn.spotube_plugin_piped.fakes.FakePiped
 import dev.icedborn.spotube_plugin_piped.fakes.vid
-import dev.krtirtho.plugin_interfaces.host_apis.HttpMethod
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runTest
+import org.spotube.plugin_interfaces.host_apis.HttpMethod
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull

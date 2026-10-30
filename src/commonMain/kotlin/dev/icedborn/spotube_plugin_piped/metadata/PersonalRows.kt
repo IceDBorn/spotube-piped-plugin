@@ -7,9 +7,9 @@ import dev.icedborn.spotube_plugin_piped.store.PLAYS_KEY
 import dev.icedborn.spotube_plugin_piped.store.PlayHistory
 import dev.icedborn.spotube_plugin_piped.store.PlaySnapshot
 import dev.icedborn.spotube_plugin_piped.sync.PlaySource
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.browse.MetadataBrowseItem
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.browse.MetadataBrowseSection
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
+import org.spotube.plugin_interfaces.plugin_apis.metadata.browse.MetadataBrowseItem
+import org.spotube.plugin_interfaces.plugin_apis.metadata.browse.MetadataBrowseSection
+import org.spotube.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 
 private const val ROW_TRACKS = 20
 private const val MIN_ROW_TRACKS = 5

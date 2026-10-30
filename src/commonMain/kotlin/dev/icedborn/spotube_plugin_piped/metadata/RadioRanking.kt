@@ -1,7 +1,7 @@
 package dev.icedborn.spotube_plugin_piped.metadata
 
 import dev.icedborn.spotube_plugin_piped.client.cleanArtistName
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
+import org.spotube.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 
 /** Songs one artist may place in a radio batch before the rest of theirs wait for the leftover slots. */
 internal const val RADIO_PER_ARTIST = 2

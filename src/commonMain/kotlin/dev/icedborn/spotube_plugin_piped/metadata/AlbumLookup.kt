@@ -14,10 +14,10 @@ import dev.icedborn.spotube_plugin_piped.store.NO_ALBUM
 import dev.icedborn.spotube_plugin_piped.store.cacheAlbumChainPage
 import dev.icedborn.spotube_plugin_piped.store.cachedAlbumChainPage
 import dev.icedborn.spotube_plugin_piped.store.orNull
-import dev.krtirtho.plugin_interfaces.extras.logger.Logger
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import org.spotube.plugin_interfaces.extras.logger.Logger
 
 private val albumLog = Logger("PipedAlbum")
 

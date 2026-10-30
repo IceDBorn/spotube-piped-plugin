@@ -1,6 +1,6 @@
 package dev.icedborn.spotube_plugin_piped.fakes
 
-import dev.krtirtho.plugin_interfaces.host_apis.PersistedStorageAPI
+import org.spotube.plugin_interfaces.host_apis.PersistedStorageAPI
 
 /** In-memory stand-in for the host persistence API. */
 open class FakeStorage : PersistedStorageAPI {

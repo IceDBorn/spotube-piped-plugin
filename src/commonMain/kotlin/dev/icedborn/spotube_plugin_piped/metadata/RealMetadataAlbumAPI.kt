@@ -13,16 +13,16 @@ import dev.icedborn.spotube_plugin_piped.store.PipedSavedLibrary
 import dev.icedborn.spotube_plugin_piped.store.PlaylistRows
 import dev.icedborn.spotube_plugin_piped.store.SavedKind
 import dev.icedborn.spotube_plugin_piped.store.orNull
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.album.MetadataAlbum
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.album.MetadataAlbumAPI
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.album.MetadataAlbumType
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationResult
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withTimeoutOrNull
+import org.spotube.plugin_interfaces.plugin_apis.metadata.album.MetadataAlbum
+import org.spotube.plugin_interfaces.plugin_apis.metadata.album.MetadataAlbumAPI
+import org.spotube.plugin_interfaces.plugin_apis.metadata.album.MetadataAlbumType
+import org.spotube.plugin_interfaces.plugin_apis.metadata.common.PaginationResult
+import org.spotube.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
+import org.spotube.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 
 /** How long a screen waits for an album lookup before it gets a stub; the lookup keeps running and fills the cache. */
 private const val ALBUM_WAIT_MS = 4_000L

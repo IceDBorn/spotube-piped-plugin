@@ -5,7 +5,7 @@ import dev.icedborn.spotube_plugin_piped.client.PipedSearchFilter
 import dev.icedborn.spotube_plugin_piped.client.PipedSearchItem
 import dev.icedborn.spotube_plugin_piped.client.PipedStreamsInfo
 import dev.icedborn.spotube_plugin_piped.store.orNull
-import dev.krtirtho.plugin_interfaces.extras.logger.Logger
+import org.spotube.plugin_interfaces.extras.logger.Logger
 import kotlin.coroutines.cancellation.CancellationException
 
 private val audioLog = Logger("PipedAudio")

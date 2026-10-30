@@ -1,6 +1,6 @@
-import dev.krtirtho.PluginAbility
-import dev.krtirtho.PluginCapability
 import org.gradle.kotlin.dsl.withType
+import org.spotube.PluginAbility
+import org.spotube.PluginCapability
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)

@@ -13,13 +13,13 @@ import dev.icedborn.spotube_plugin_piped.core.SIGNED_OUT_PROFILE
 import dev.icedborn.spotube_plugin_piped.core.accountStamp
 import dev.icedborn.spotube_plugin_piped.core.dropSyncState
 import dev.icedborn.spotube_plugin_piped.core.epochMillis
-import dev.krtirtho.plugin_interfaces.extras.logger.Logger
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonPrimitive
+import org.spotube.plugin_interfaces.extras.logger.Logger
 
 /** The copy binding, pending marker and bare-miss record of a locally created playlist. */
 internal const val MIRROR_PLAYLIST_PREFIX = "mirror.playlist:"

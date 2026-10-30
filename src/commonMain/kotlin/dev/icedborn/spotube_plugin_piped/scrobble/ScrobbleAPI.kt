@@ -5,10 +5,10 @@ import dev.icedborn.spotube_plugin_piped.core.epochMillis
 import dev.icedborn.spotube_plugin_piped.store.EntityStore
 import dev.icedborn.spotube_plugin_piped.store.PlayHistory
 import dev.icedborn.spotube_plugin_piped.store.orNull
-import dev.krtirtho.plugin_interfaces.extras.logger.Logger
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
-import dev.krtirtho.plugin_interfaces.plugin_apis.scrobble.ScrobbleAPI
-import dev.krtirtho.plugin_interfaces.plugin_apis.scrobble.ScrobbleTrack
+import org.spotube.plugin_interfaces.extras.logger.Logger
+import org.spotube.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
+import org.spotube.plugin_interfaces.plugin_apis.scrobble.ScrobbleAPI
+import org.spotube.plugin_interfaces.plugin_apis.scrobble.ScrobbleTrack
 import kotlin.coroutines.cancellation.CancellationException
 
 private val scrobbleLog = Logger("PipedScrobble")

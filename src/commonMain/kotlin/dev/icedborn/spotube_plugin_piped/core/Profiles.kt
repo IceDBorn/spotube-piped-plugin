@@ -1,8 +1,8 @@
 package dev.icedborn.spotube_plugin_piped.core
 
 import dev.icedborn.spotube_plugin_piped.store.EntityStore
-import dev.krtirtho.plugin_interfaces.extras.logger.Logger
 import kotlinx.serialization.json.JsonPrimitive
+import org.spotube.plugin_interfaces.extras.logger.Logger
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 

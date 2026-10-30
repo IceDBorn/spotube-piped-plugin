@@ -7,7 +7,7 @@ import dev.icedborn.spotube_plugin_piped.client.cleanArtistName
 import dev.icedborn.spotube_plugin_piped.client.toTrack
 import dev.icedborn.spotube_plugin_piped.store.EntityStore
 import dev.icedborn.spotube_plugin_piped.store.orNull
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
+import org.spotube.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
 
 /** Reads YouTube Music radio mixes and the seed artist's catalog, for endless playback, Home and related artists. */
 internal class RadioMixes(private val client: PipedClient, private val store: EntityStore) {

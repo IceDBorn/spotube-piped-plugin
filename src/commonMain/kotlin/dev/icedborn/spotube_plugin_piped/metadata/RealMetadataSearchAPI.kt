@@ -12,14 +12,14 @@ import dev.icedborn.spotube_plugin_piped.core.emptyPagination
 import dev.icedborn.spotube_plugin_piped.core.nextContinuation
 import dev.icedborn.spotube_plugin_piped.store.EntityStore
 import dev.icedborn.spotube_plugin_piped.store.orNull
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationResult
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.search.MetadataSearchAPI
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.search.MetadataSearchResult
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.search.MetadataSupportedSearchType
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import org.spotube.plugin_interfaces.plugin_apis.metadata.common.PaginationResult
+import org.spotube.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
+import org.spotube.plugin_interfaces.plugin_apis.metadata.search.MetadataSearchAPI
+import org.spotube.plugin_interfaces.plugin_apis.metadata.search.MetadataSearchResult
+import org.spotube.plugin_interfaces.plugin_apis.metadata.search.MetadataSupportedSearchType
 
 /** Piped returns 20 rows on a full music_songs page. */
 private const val FULL_SONGS_PAGE = 20

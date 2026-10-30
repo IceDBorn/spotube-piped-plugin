@@ -64,8 +64,6 @@ Tests mirror the package layout under `src/commonTest/`. The fakes in `fakes/`:
 - `store/AccountHarness` wires the account side over a `FakePiped`. `store/HistoryFixture.kt` holds the helpers of
   the history tests.
 
-`vendor/maven` holds the Spotube Gradle plugin, which is not published anywhere. Do not edit it.
-
 ## Rules
 
 - **QuickJS catch and finally.** A suspend call inside a `catch` of a `try` that also has a `finally` breaks

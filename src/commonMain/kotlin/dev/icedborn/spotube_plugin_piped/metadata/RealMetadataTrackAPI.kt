@@ -11,11 +11,11 @@ import dev.icedborn.spotube_plugin_piped.store.SavedKind
 import dev.icedborn.spotube_plugin_piped.store.SkipLog
 import dev.icedborn.spotube_plugin_piped.store.orNull
 import dev.icedborn.spotube_plugin_piped.sync.Taste
-import dev.krtirtho.plugin_interfaces.extras.logger.Logger
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationResult
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
-import dev.krtirtho.plugin_interfaces.plugin_apis.metadata.track.MetadataTrackAPI
+import org.spotube.plugin_interfaces.extras.logger.Logger
+import org.spotube.plugin_interfaces.plugin_apis.metadata.common.PaginationResult
+import org.spotube.plugin_interfaces.plugin_apis.metadata.common.PaginationStrategy
+import org.spotube.plugin_interfaces.plugin_apis.metadata.track.MetadataTrack
+import org.spotube.plugin_interfaces.plugin_apis.metadata.track.MetadataTrackAPI
 
 private val trackLog = Logger("PipedTracks")
 
